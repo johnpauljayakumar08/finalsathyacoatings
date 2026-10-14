@@ -516,6 +516,9 @@ const SalaryPayables = () => {
               <p className="text-sm mt-1" style={{ color: themeColors.textSecondary }}>
                 Logged in as: <strong>{currentUser || 'Loading...'}</strong>
               </p>
+              <p className="mt-2 text-xs text-gray-500">
+                Project allocation is based on attendance; salary for a day is split equally across the employee's attended assignments.
+              </p>
             </div>
           </div>
         </div>
@@ -597,7 +600,7 @@ const SalaryPayables = () => {
                 <thead style={{ backgroundColor: themeColors.lightBg }}>
                   <tr>
                     <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: themeColors.textSecondary }}>Employee</th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wider" style={{ color: themeColors.textSecondary }}>Approved</th>
+                    <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wider" style={{ color: themeColors.textSecondary }}>Allocated</th>
                     <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wider" style={{ color: themeColors.textSecondary }}>Paid (This Bank)</th>
                     <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wider" style={{ color: themeColors.textSecondary }}>Balance</th>
                     <th className="px-6 py-4 text-center text-xs font-semibold uppercase tracking-wider" style={{ color: themeColors.textSecondary }}>Action</th>

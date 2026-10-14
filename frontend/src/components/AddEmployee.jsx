@@ -2,8 +2,10 @@ import { API_BASE_URL } from "../config/api.js";
 import React, { useState, useEffect } from "react";
 import { useParams } from "react-router-dom"; // Import useParams
 import axios from "axios";
-import { Loader2, X, Save, UserPlus, User, Building, Calendar, Mail, Phone, MapPin, Users, Briefcase, FileText, DollarSign } from "lucide-react";
+import { Loader2, X, Save, UserPlus, User, Building, Calendar, Mail, Phone, MapPin, Users, Briefcase, FileText, DollarSign, LockKeyhole } from "lucide-react";
 import Swal from "sweetalert2";
+
+const COMPANY_NAME = "Sathya Coatings";
 
 const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase = true }) => {
   const { encodedUserId } = useParams(); // Get encodedUserId from URL
@@ -15,13 +17,13 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
     date_of_birth: "",
     date_of_joining: "",
     status_id: "",
-    company: "",
+    company: COMPANY_NAME,
     dept_id: "",
     emp_type_id: "",
     designation_id: "",
-    branch: "",
     mobile: "",
     company_email: "",
+    user_password: "",
     current_address: "",
     permanent_address: "",
     esic_number: "", // Added esic_number
@@ -136,11 +138,14 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
     if (!formData.dept_id) newErrors.dept_id = "Department is required";
     if (!formData.emp_type_id) newErrors.emp_type_id = "Employment Type is required";
     if (!formData.designation_id) newErrors.designation_id = "Designation is required";
-    if (!formData.branch) newErrors.branch = "Branch is required";
     if (!formData.mobile) newErrors.mobile = "Mobile is required";
     else if (!mobileRegex.test(formData.mobile)) newErrors.mobile = "Invalid mobile: 10 digits, optional +91";
     if (!formData.company_email) newErrors.company_email = "Company Email is required";
     else if (!emailRegex.test(formData.company_email)) newErrors.company_email = "Invalid email format";
+    if (saveToDatabase && formData.user_password.length < 8) newErrors.user_password = "Password must be at least 8 characters";
+    if (saveToDatabase && new TextEncoder().encode(formData.user_password).length > 72) {
+      newErrors.user_password = "Password cannot exceed 72 bytes";
+    }
     if (!formData.current_address) newErrors.current_address = "Current Address is required";
     if (!formData.permanent_address) newErrors.permanent_address = "Permanent Address is required";
     if (!formData.approved_salary) newErrors.approved_salary = "Approved Salary is required";
@@ -169,13 +174,11 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
       setLoading((l) => ({ ...l, form: true }));
       setErrors({});
 
-      let employeeData = { ...formData, created_by: userId }; // Include created_by
+      let employeeData = { ...formData, company: COMPANY_NAME, branch: "", created_by: userId }; // Include created_by
       let designation;
 
       if (saveToDatabase) {
-        console.log("Submitting payload to API:", employeeData);
         const response = await axios.post(`${API_BASE_URL}/material/add-employee`, employeeData);
-        console.log("API response:", response.data);
         employeeData = response.data.data;
         designation = designations.find((d) => d.id === parseInt(employeeData.designation_id))?.designation || "";
       } else {
@@ -204,13 +207,13 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
         date_of_birth: "",
         date_of_joining: "",
         status_id: "",
-        company: "",
+        company: COMPANY_NAME,
         dept_id: "",
         emp_type_id: "",
         designation_id: "",
-        branch: "",
         mobile: "",
         company_email: "",
+        user_password: "",
         current_address: "",
         permanent_address: "",
         esic_number: "", // Reset esic_number
@@ -265,7 +268,7 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
                 optLabel: "status",
                 icon: Users,
               },
-              { label: "Company", name: "company", type: "text", placeholder: "e.g., Lakshmi Mills", icon: Building },
+              { label: "Company", name: "company", type: "fixed", icon: Building },
               {
                 label: "Department",
                 name: "dept_id",
@@ -293,9 +296,9 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
                 optLabel: "designation",
                 icon: Users,
               },
-              { label: "Branch", name: "branch", type: "text", placeholder: "e.g., Peelamedu", icon: MapPin },
               { label: "Mobile", name: "mobile", type: "text", placeholder: "e.g., +919876543210", icon: Phone },
               { label: "Company Email", name: "company_email", type: "email", placeholder: "e.g., name@company.com", icon: Mail },
+              { label: "Password", name: "user_password", type: "password", placeholder: "At least 8 characters", icon: LockKeyhole, accountField: true },
               {
                 label: "Approved Salary",
                 name: "approved_salary",
@@ -337,7 +340,14 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
                   {field.icon && <field.icon className="h-4 w-4 mr-2 text-gray-500" />}
                   {field.label}
                 </label>
-                {field.type === "select" ? (
+                {field.type === "fixed" ? (
+                  <input
+                    type="text"
+                    value={COMPANY_NAME}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-100 text-gray-700 sm:text-sm"
+                  />
+                ) : field.type === "select" ? (
                   <div className="relative">
                     <select
                       name={field.name}
@@ -379,11 +389,18 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
                     placeholder={field.placeholder}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                     disabled={isAddingEmployee}
-                    required={field.name !== "esic_number" && field.name !== "pf_number"} // Optional fields
+                    required={field.name !== "esic_number" && field.name !== "pf_number" && (!field.accountField || saveToDatabase)}
+                    maxLength={field.name === "user_password" ? 72 : undefined}
                     step={field.name === "approved_salary" ? "0.01" : undefined}
                     min={field.name === "approved_salary" ? "0" : undefined}
-                    autoComplete="off"
+                    minLength={field.name === "user_password" ? 8 : undefined}
+                    autoComplete={field.name === "user_password" ? "new-password" : "off"}
                   />
+                )}
+                {field.name === "company_email" && saveToDatabase && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    This email will also be the employee's login username.
+                  </p>
                 )}
                 {errors[field.name] && (
                   <p className="mt-1 text-sm text-red-600">{errors[field.name]}</p>

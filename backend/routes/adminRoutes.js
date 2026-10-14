@@ -52,9 +52,11 @@ router.get('/fetch-material-planning-budget', adminController.fetchMaterialPlann
 
 // Route to get contractors
 router.get('/contractors', adminController.getContractors);
+router.get('/site-engineers', adminController.getSiteEngineers);
 
 // Route to add labour
 router.post('/add-labour', adminController.addLabour);
+router.post('/import-labours', adminController.importLabours);
 
 router.get("/labour", adminController.getLabourEmployees);
 router.post("/save-labour-assignment", adminController.saveLabourAssignment);

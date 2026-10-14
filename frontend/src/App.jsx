@@ -241,10 +241,8 @@ import SupplyMaterialDispatch from './pages/supply/SupplyMaterialDispatch';
 import SuppliedMaterials from './pages/supply/SuppliedMaterials';
 
 import MaterialAcknowledgement from './pages/site-incharge/MaterialAcknowledgement';
-import MaterialUsage from './pages/site-incharge/MaterialUsage';
 import WorkAndMaterialEntry from './pages/site-incharge/WorkAndMaterialEntry';
 import BudgetExpenseEntry from './pages/site-incharge/BudgetExpenseEntry';
-import WorkCompletionEntry from './pages/site-incharge/WorkCompletionEntry';
 import LabourAssign from './pages/site-incharge/LabourAssign';
 import LabourAttendance from './pages/site-incharge/LabourAttendance';
 import AdditionalExpense from './pages/site-incharge/AdditionalExpense';
@@ -276,6 +274,11 @@ const RedirectToDashboard = () => {
 const RedirectToFinanceBankStatement = () => {
   const { rolePrefix, encodedUserId } = useParams();
   return <Navigate to={`/${rolePrefix}/finance/bank-statement-consolidation/${encodedUserId}`} replace />;
+};
+
+const RedirectToWorkAndMaterialEntry = () => {
+  const { encodedUserId } = useParams();
+  return <Navigate to={`/site-incharge/work-and-material-entry/${encodedUserId}`} replace />;
 };
 
 const App = () => {
@@ -360,10 +363,10 @@ const App = () => {
           {/* Site Incharge */}
           <Route path="/site-incharge/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><Placeholder title="Site Incharge Home" /></ProtectedRoute>} />
           <Route path="/site-incharge/material-acknowledgment/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><MaterialAcknowledgement /></ProtectedRoute>} />
-          <Route path="/site-incharge/material-usage/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><MaterialUsage /></ProtectedRoute>} />
           <Route path="/site-incharge/expense-entry/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><BudgetExpenseEntry /></ProtectedRoute>} />
           <Route path="/site-incharge/work-and-material-entry/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><WorkAndMaterialEntry /></ProtectedRoute>} />
-          <Route path="/site-incharge/work-completion/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><WorkCompletionEntry /></ProtectedRoute>} />
+          <Route path="/site-incharge/material-usage/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><RedirectToWorkAndMaterialEntry /></ProtectedRoute>} />
+          <Route path="/site-incharge/work-completion/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><RedirectToWorkAndMaterialEntry /></ProtectedRoute>} />
           <Route path="/site-incharge/labor-assignment/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><LabourAssign /></ProtectedRoute>} />
           <Route path="/site-incharge/labor-attendance/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><LabourAttendance /></ProtectedRoute>} />
           <Route path="/site-incharge/additional-expense/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><AdditionalExpense /></ProtectedRoute>} />

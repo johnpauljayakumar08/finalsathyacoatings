@@ -2,8 +2,10 @@ import { API_BASE_URL } from "../config/api.js";
 import React, { useState, useEffect } from "react";
 import { useParams } from "react-router-dom"; // Import useParams
 import axios from "axios";
-import { Loader2, X, Save, User, Building, Calendar, Mail, Phone, MapPin, Users, Briefcase, FileText, DollarSign } from "lucide-react";
+import { Loader2, X, Save, User, Building, Calendar, Mail, Phone, MapPin, Users, Briefcase, FileText, DollarSign, HardHat } from "lucide-react";
 import Swal from "sweetalert2";
+
+const COMPANY_NAME = "Sathya Coatings";
 
 const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase = true }) => {
   const { encodedUserId } = useParams(); // Get encodedUserId from URL
@@ -14,36 +16,33 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
     date_of_birth: "",
     date_of_joining: "",
     status_id: "",
-    company: "",
-    dept_id: "",
+    company: COMPANY_NAME,
     emp_type_id: "",
     designation_id: "",
-    branch: "",
     mobile: "",
     company_email: "",
     current_address: "",
     permanent_address: "",
     esic_number: "",
     pf_number: "",
-    contractor_id: "",
+    site_engineer_emp_id: "",
+    aadhaar_number: "",
     approved_salary: ""
   });
 
   const [errors, setErrors] = useState({});
   const [genders, setGenders] = useState([]);
-  const [departments, setDepartments] = useState([]);
   const [employmentTypes, setEmploymentTypes] = useState([]);
   const [designations, setDesignations] = useState([]);
   const [statuses, setStatuses] = useState([]);
-  const [contractors, setContractors] = useState([]);
+  const [siteEngineers, setSiteEngineers] = useState([]);
   const [loading, setLoading] = useState({
     form: false,
     genders: false,
-    departments: false,
     employmentTypes: false,
     designations: false,
     statuses: false,
-    contractors: false
+    siteEngineers: false
   });
 
   // Decode userId from encodedUserId
@@ -73,17 +72,6 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
           setErrors((prev) => ({ ...prev, form: "Failed to load genders." }));
         } finally {
           setLoading((l) => ({ ...l, genders: false }));
-        }
-
-        try {
-          setLoading((l) => ({ ...l, departments: true }));
-          const { data } = await axios.get(`${API_BASE_URL}/material/departments`);
-          setDepartments(data.data || []);
-        } catch (error) {
-          console.error("Error fetching departments:", error);
-          setErrors((prev) => ({ ...prev, form: "Failed to load departments." }));
-        } finally {
-          setLoading((l) => ({ ...l, departments: false }));
         }
 
         try {
@@ -120,14 +108,14 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
         }
 
         try {
-          setLoading((l) => ({ ...l, contractors: true }));
-          const { data } = await axios.get(`${API_BASE_URL}/admin/contractors`);
-          setContractors(data.data || []);
+          setLoading((l) => ({ ...l, siteEngineers: true }));
+          const { data } = await axios.get(`${API_BASE_URL}/admin/site-engineers`);
+          setSiteEngineers(data.data || []);
         } catch (error) {
-          console.error("Error fetching contractors:", error);
-          setErrors((prev) => ({ ...prev, form: "Failed to load contractors." }));
+          console.error("Error fetching site engineers:", error);
+          setErrors((prev) => ({ ...prev, form: "Failed to load site engineers." }));
         } finally {
-          setLoading((l) => ({ ...l, contractors: false }));
+          setLoading((l) => ({ ...l, siteEngineers: false }));
         }
       })();
     }
@@ -139,8 +127,8 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
     const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
     const esicRegex = /^\d{17}$/;
-    const pfRegex = /^[A-Z]{2}\/[0-9]{5}\/[0-9]{7}\/[0-9]{3}\/[0-9]{7}$/;
     const salaryRegex = /^\d+(\.\d{1,2})?$/;
+    const aadhaarRegex = /^\d{12}$/;
 
     if (!formData.full_name) newErrors.full_name = "Full Name is required";
     if (!formData.gender_id) newErrors.gender_id = "Gender is required";
@@ -149,20 +137,20 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
     if (!formData.date_of_joining) newErrors.date_of_joining = "Date of Joining is required";
     else if (!dateRegex.test(formData.date_of_joining)) newErrors.date_of_joining = "Invalid date format (YYYY-MM-DD)";
     if (!formData.status_id) newErrors.status_id = "Status is required";
-    if (!formData.company) newErrors.company = "Company is required";
-    if (!formData.dept_id) newErrors.dept_id = "Department is required";
     if (!formData.emp_type_id) newErrors.emp_type_id = "Employment Type is required";
     if (!formData.designation_id) newErrors.designation_id = "Designation is required";
-    if (!formData.branch) newErrors.branch = "Branch is required";
+    if (!formData.site_engineer_emp_id) newErrors.site_engineer_emp_id = "Site Engineer is required";
     if (!formData.mobile) newErrors.mobile = "Mobile is required";
     else if (!mobileRegex.test(formData.mobile)) newErrors.mobile = "Invalid mobile: 10 digits, optional +91";
     if (!formData.company_email) newErrors.company_email = "Company Email is required";
     else if (!emailRegex.test(formData.company_email)) newErrors.company_email = "Invalid email format";
     if (!formData.current_address) newErrors.current_address = "Current Address is required";
     if (!formData.permanent_address) newErrors.permanent_address = "Permanent Address is required";
+    if (!aadhaarRegex.test(formData.aadhaar_number)) newErrors.aadhaar_number = "Aadhaar number must contain exactly 12 digits";
     if (formData.esic_number && !esicRegex.test(formData.esic_number)) newErrors.esic_number = "Invalid ESIC number: 17 digits";
-    // if (formData.pf_number && !pfRegex.test(formData.pf_number)) newErrors.pf_number = "Invalid PF number format (e.g., TN/MAS/1234567/123/1234567)";
-    if (formData.approved_salary && !salaryRegex.test(formData.approved_salary)) newErrors.approved_salary = "Invalid salary format (e.g., 50000 or 50000.00)";
+    if (!formData.approved_salary || !salaryRegex.test(formData.approved_salary) || Number(formData.approved_salary) <= 0) {
+      newErrors.approved_salary = "Enter a valid positive salary per shift";
+    }
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -187,7 +175,14 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
       setLoading((l) => ({ ...l, form: true }));
       setErrors({});
 
-      let labourData = { ...formData, created_by: userId }; // Include created_by
+      let labourData = {
+        ...formData,
+        company: COMPANY_NAME,
+        branch: null,
+        dept_id: null,
+        contractor_id: null,
+        created_by: userId
+      };
       let designation;
 
       if (saveToDatabase) {
@@ -205,7 +200,7 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
       Swal.fire({
         position: "top-end",
         icon: "success",
-        title: saveToDatabase ? "Temporary Employee Added Successfully!" : "Temporary Employee Added to Form!",
+        title: saveToDatabase ? "Labor Added Successfully!" : "Labor Added to Form!",
         showConfirmButton: false,
         timer: 2000,
         toast: true,
@@ -219,18 +214,17 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
         date_of_birth: "",
         date_of_joining: "",
         status_id: "",
-        company: "",
-        dept_id: "",
+        company: COMPANY_NAME,
         emp_type_id: "",
         designation_id: "",
-        branch: "",
         mobile: "",
         company_email: "",
         current_address: "",
         permanent_address: "",
         esic_number: "",
         pf_number: "",
-        contractor_id: "",
+        site_engineer_emp_id: "",
+        aadhaar_number: "",
         approved_salary: ""
       });
     } catch (error) {
@@ -250,7 +244,7 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
         className="w-full max-w-4xl bg-white rounded-xl shadow-2xl p-6 max-h-[80vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <h4 className="text-lg font-semibold text-gray-700 mb-4">Add Temporary Employee</h4>
+        <h4 className="text-lg font-semibold text-gray-700 mb-4">Add Labor Details</h4>
         {errors.form && (
           <div className="mb-4 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-md text-sm">
             {errors.form}
@@ -280,16 +274,7 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
                 optLabel: "status",
                 icon: Users,
               },
-              { label: "Company", name: "company", type: "text", placeholder: "e.g., Lakshmi Mills", icon: Building },
-              {
-                label: "Department",
-                name: "dept_id",
-                type: "select",
-                options: saveToDatabase ? departments : [{ id: "1", department: "General" }],
-                loading: saveToDatabase && loading.departments,
-                optLabel: "department",
-                icon: Users,
-              },
+              { label: "Company", name: "company", type: "fixed", icon: Building },
               {
                 label: "Employment Type",
                 name: "emp_type_id",
@@ -308,19 +293,19 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
                 optLabel: "designation",
                 icon: Users,
               },
-              { label: "Branch", name: "branch", type: "text", placeholder: "e.g., Peelamedu", icon: MapPin },
               { label: "Mobile", name: "mobile", type: "text", placeholder: "e.g., +919876543210", icon: Phone },
               { label: "Company Email", name: "company_email", type: "email", placeholder: "e.g., name@company.com", icon: Mail },
               {
-                label: "Contractor",
-                name: "contractor_id",
+                label: "Site Engineer",
+                name: "site_engineer_emp_id",
                 type: "select",
-                options: saveToDatabase ? contractors : [{ id: "1", contractor_name: "Sample Contractor" }],
-                loading: saveToDatabase && loading.contractors,
-                optLabel: "contractor_name",
-                icon: Users,
-                optional: true
+                options: saveToDatabase ? siteEngineers : [{ emp_id: "SAMPLE-ENGINEER", full_name: "Sample Site Engineer" }],
+                loading: saveToDatabase && loading.siteEngineers,
+                optLabel: "full_name",
+                optValue: "emp_id",
+                icon: HardHat
               },
+              { label: "Aadhaar Number", name: "aadhaar_number", type: "text", placeholder: "Enter 12-digit Aadhaar number", icon: FileText },
               {
                 label: "ESIC Number",
                 name: "esic_number",
@@ -338,12 +323,11 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
                 optional: true
               },
               {
-                label: "Approved Salary",
+                label: "Approved Salary per Shift",
                 name: "approved_salary",
-                type: "text",
-                placeholder: "e.g., 50000.00",
+                type: "number",
+                placeholder: "Enter amount per shift",
                 icon: DollarSign,
-                optional: true
               },
               {
                 label: "Current Address",
@@ -365,7 +349,15 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
                   {field.icon && <field.icon className="h-4 w-4 mr-2 text-gray-500" />}
                   {field.label}
                 </label>
-                {field.type === "select" ? (
+                {field.type === "fixed" ? (
+                  <input
+                    type="text"
+                    name={field.name}
+                    value={COMPANY_NAME}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-100 text-gray-700 sm:text-sm"
+                  />
+                ) : field.type === "select" ? (
                   <div className="relative">
                     <select
                       name={field.name}
@@ -378,7 +370,7 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
                       <option value="">{field.optional ? `Select ${field.label} (Optional)` : `Select ${field.label}`}</option>
                       {field.options &&
                         field.options.map((opt) => (
-                          <option key={opt.id} value={opt.id}>
+                          <option key={opt[field.optValue || "id"]} value={opt[field.optValue || "id"]}>
                             {opt[field.optLabel] || "N/A"}
                           </option>
                         ))}

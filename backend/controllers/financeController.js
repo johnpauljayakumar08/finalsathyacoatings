@@ -816,7 +816,20 @@ exports.getSiteInchargeSalarySummaryByAttendance = async (req, res) => {
         em.emp_id,
         em.full_name,
         em.approved_salary,
-        COALESCE(SUM(fsa.shift), 0) as total_shifts
+        COALESCE(SUM(fsa.shift), 0) as total_shifts,
+        COALESCE(SUM(
+          (em.approved_salary / 30) * fsa.shift /
+          GREATEST((
+            SELECT COUNT(DISTINCT sia_share.id)
+            FROM siteincharge_assign sia_share
+            INNER JOIN finance_siteincharge_attendance fsa_share
+              ON fsa_share.siteincharge_assign_id = sia_share.id
+             AND fsa_share.entry_date = fsa.entry_date
+            WHERE sia_share.emp_id = em.emp_id
+              AND sia_share.from_date <= fsa.entry_date
+              AND COALESCE(sia_share.to_date, '9999-12-31') >= fsa.entry_date
+          ), 1)
+        ), 0) AS allocated_paid
       FROM employee_master em
       INNER JOIN siteincharge_assign sia ON em.emp_id = sia.emp_id
       LEFT JOIN finance_siteincharge_attendance fsa ON sia.id = fsa.siteincharge_assign_id 
@@ -830,8 +843,7 @@ exports.getSiteInchargeSalarySummaryByAttendance = async (req, res) => {
     const summaryData = rows.map(row => {
       const monthlySalary = parseFloat(row.approved_salary) || 0;
       const totalShifts = parseFloat(row.total_shifts) || 0;
-      const dailyRate = monthlySalary / 30;
-      const totalPaid = dailyRate * totalShifts;
+      const totalPaid = parseFloat(row.allocated_paid) || 0;
       const balance = monthlySalary - totalPaid;
 
       return {
@@ -900,10 +912,32 @@ exports.getSalaryPayablesSummary = async (req, res) => {
     const startDate = `${year}-${mon}-01`;
 
     const sql = `
-      SELECT 
+      SELECT
         em.emp_id,
         em.full_name,
-        em.approved_salary,
+        em.approved_salary AS monthly_salary,
+        COALESCE((
+          SELECT SUM(
+            (em.approved_salary / 30) * attendance.shift /
+            GREATEST((
+              SELECT COUNT(DISTINCT attended_assignment.id)
+              FROM siteincharge_assign attended_assignment
+              INNER JOIN finance_siteincharge_attendance attended
+                ON attended.siteincharge_assign_id = attended_assignment.id
+               AND attended.entry_date = attendance.entry_date
+              WHERE attended_assignment.emp_id = em.emp_id
+                AND attended_assignment.from_date <= attendance.entry_date
+                AND COALESCE(attended_assignment.to_date, '9999-12-31') >= attendance.entry_date
+            ), 1)
+          )
+          FROM siteincharge_assign project_assignment
+          INNER JOIN finance_siteincharge_attendance attendance
+            ON attendance.siteincharge_assign_id = project_assignment.id
+          WHERE project_assignment.emp_id = em.emp_id
+            AND project_assignment.pd_id = ?
+            AND attendance.entry_date >= ?
+            AND attendance.entry_date <= LAST_DAY(?)
+        ), 0) AS allocated_salary,
         fsp.id AS transaction_id,
         fsp.entry_date,
         fsp.paid_amount,
@@ -913,19 +947,24 @@ exports.getSalaryPayablesSummary = async (req, res) => {
         fsp.updated_at,
         fsp.updated_by
       FROM employee_master em
-      INNER JOIN siteincharge_assign sia 
-        ON em.emp_id = sia.emp_id
-      LEFT JOIN finance_salary_payable fsp 
-        ON em.emp_id = fsp.emp_id 
-        AND sia.pd_id = fsp.pd_id
+      INNER JOIN (
+        SELECT DISTINCT emp_id
+        FROM siteincharge_assign
+        WHERE pd_id = ?
+      ) project_employees ON project_employees.emp_id = em.emp_id
+      LEFT JOIN finance_salary_payable fsp
+        ON em.emp_id = fsp.emp_id
+        AND fsp.pd_id = ?
         AND fsp.finance_bank_id = ?
         AND fsp.entry_date >= ?
         AND fsp.entry_date <= LAST_DAY(?)
-      WHERE sia.pd_id = ?
       ORDER BY em.full_name ASC, fsp.created_at ASC
     `;
 
-    const [rows] = await db.query(sql, [bank_id, startDate, startDate, pd_id]);
+    const [rows] = await db.query(sql, [
+      pd_id, startDate, startDate, pd_id,
+      pd_id, bank_id, startDate, startDate,
+    ]);
 
     // Group payments by employee
     const employeeMap = {};
@@ -937,7 +976,8 @@ exports.getSalaryPayablesSummary = async (req, res) => {
         employeeMap[empId] = {
           emp_id: empId,
           full_name: row.full_name,
-          approved_salary: parseFloat(row.approved_salary || 0),
+          monthly_salary: parseFloat(row.monthly_salary || 0),
+          approved_salary: parseFloat(row.allocated_salary || 0),
           transactions: [],
           total_paid: 0
         };
@@ -1027,26 +1067,48 @@ exports.updateSalaryPayable = async (req, res) => {
       });
     }
 
-    // 1. Get approved salary
-    const [emp] = await db.query(
-      'SELECT approved_salary FROM employee_master WHERE emp_id = ?',
-      [emp_id]
-    );
-
-    if (emp.length === 0) {
-      return res.status(404).json({ status: 'error', message: 'Employee not found' });
-    }
-
-    const approved = parseFloat(emp[0].approved_salary) || 0;
-
-    // 2. Determine entry date
+    // Determine the month used to calculate this project's allocated salary.
     let useDate = entry_date && /^\d{4}-\d{2}-\d{2}$/.test(entry_date)
       ? entry_date
       : new Date().toISOString().slice(0, 10);
 
-    // 3. Calculate current monthly total paid (for correct balance)
     const year = useDate.substring(0, 4);
     const month = useDate.substring(5, 7);
+    const startDate = `${year}-${month}-01`;
+
+    const [employeeRows] = await db.query(
+      `SELECT
+         em.emp_id,
+         COALESCE((
+           SELECT SUM(
+             (em.approved_salary / 30) * attendance.shift /
+             GREATEST((
+               SELECT COUNT(DISTINCT attended_assignment.id)
+               FROM siteincharge_assign attended_assignment
+               INNER JOIN finance_siteincharge_attendance attended
+                 ON attended.siteincharge_assign_id = attended_assignment.id
+                AND attended.entry_date = attendance.entry_date
+               WHERE attended_assignment.emp_id = em.emp_id
+                 AND attended_assignment.from_date <= attendance.entry_date
+                 AND COALESCE(attended_assignment.to_date, '9999-12-31') >= attendance.entry_date
+             ), 1)
+           )
+           FROM siteincharge_assign project_assignment
+           INNER JOIN finance_siteincharge_attendance attendance
+             ON attendance.siteincharge_assign_id = project_assignment.id
+           WHERE project_assignment.emp_id = em.emp_id
+             AND project_assignment.pd_id = ?
+             AND attendance.entry_date >= ?
+             AND attendance.entry_date <= LAST_DAY(?)
+         ), 0) AS allocated_salary
+       FROM employee_master em
+       WHERE em.emp_id = ?`,
+      [pd_id, startDate, startDate, emp_id]
+    );
+    if (!employeeRows.length) {
+      return res.status(404).json({ status: 'error', message: 'Employee not found' });
+    }
+    const allocatedSalary = parseFloat(employeeRows[0].allocated_salary) || 0;
 
     const [monthSumRow] = await db.query(`
       SELECT COALESCE(SUM(paid_amount), 0) AS total
@@ -1059,7 +1121,7 @@ exports.updateSalaryPayable = async (req, res) => {
 
     const alreadyPaidThisMonth = parseFloat(monthSumRow[0].total) || 0;
     const newMonthlyTotal = alreadyPaidThisMonth + paid;
-    const newBalance = approved - newMonthlyTotal;
+    const newBalance = allocatedSalary - newMonthlyTotal;
 
     // 4. Insert the new payment record
     const [insertResult] = await db.query(`

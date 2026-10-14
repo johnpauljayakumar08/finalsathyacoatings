@@ -12,7 +12,9 @@
                 router.get("/designations", materialController.fetchDesignations);
                 router.get("/employees", materialController.fetchEmployees);
                 router.post("/assign-incharge", materialController.assignInchargeToSite);
+                router.put("/assign-incharge/:assignmentId/date", materialController.updateInchargeAssignmentForDate);
                 router.post("/add-employee", materialController.addEmployee);
+                router.put("/employees/:empId/login", materialController.updateEmployeeLogin);
                 router.get("/assigned-incharges", materialController.getAssignedIncharges);
                 router.get("/genders", materialController.fetchGenders);
                 router.get("/departments", materialController.fetchDepartments);

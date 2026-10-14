@@ -621,7 +621,7 @@ const SalaryPayablesModal = ({ onClose, createdBy }) => {
           {employees.length > 0 && (
             <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-white border rounded-lg p-4 shadow-sm">
-                <div className="text-sm text-gray-600 mb-1">Total Approved Salary</div>
+                <div className="text-sm text-gray-600 mb-1">Total Allocated Salary</div>
                 <div className="text-2xl font-bold text-gray-800">{formatINR(totalApproved)}</div>
               </div>
               <div className="bg-white border rounded-lg p-4 shadow-sm">
@@ -686,7 +686,7 @@ const SalaryPayablesModal = ({ onClose, createdBy }) => {
                   <tr>
                     <th className="px-5 py-3 text-left text-sm font-semibold w-8"></th>
                     <th className="px-5 py-3 text-left text-sm font-semibold">Employee Details</th>
-                    <th className="px-5 py-3 text-right text-sm font-semibold">Approved</th>
+                    <th className="px-5 py-3 text-right text-sm font-semibold">Allocated</th>
                     <th className="px-5 py-3 text-right text-sm font-semibold">Total Paid</th>
                     <th className="px-5 py-3 text-right text-sm font-semibold">Balance</th>
                     <th className="px-5 py-3 text-center text-sm font-semibold">Actions</th>

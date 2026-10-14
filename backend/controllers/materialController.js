@@ -1,4 +1,23 @@
 const db = require('../config/db');
+const bcrypt = require('bcrypt');
+
+const getEmployeeRoleName = (designation) => {
+  const normalizedDesignation = designation.toLowerCase().replace(/[^a-z]/g, '');
+  const designationRoleMap = {
+    sitesupervisor: 'siteincharge',
+    accountant: 'accounts_team',
+    hrmanager: 'admin',
+    marketingexecutive: 'admin',
+    siteengineer: 'siteincharge',
+  };
+  return designationRoleMap[normalizedDesignation] || null;
+};
+
+const toSqlDateString = (value) => (
+  value instanceof Date
+    ? `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
+    : String(value).slice(0, 10)
+);
 
 exports.test = async (req, res) => {
   try {
@@ -236,13 +255,16 @@ exports.fetchEmployees = async (req, res) => {
         em.esic_number,
         em.pf_number,
         em.created_at,
-        em.approved_salary
+        em.approved_salary,
+        u.user_name AS login_user_name,
+        u.user_id AS login_user_id
       FROM employee_master em
       LEFT JOIN emp_gender eg ON em.gender_id = eg.id
       LEFT JOIN emp_department ed ON em.dept_id = ed.id
       LEFT JOIN employment_type et ON em.emp_type_id = et.id
       LEFT JOIN emp_designation edg ON em.designation_id = edg.id
       LEFT JOIN emp_status es ON em.status_id = es.id
+      LEFT JOIN users u ON u.user_email = em.company_email
       ORDER BY em.created_at DESC
     `;
 
@@ -265,123 +287,156 @@ exports.fetchEmployees = async (req, res) => {
 
 
 exports.assignInchargeToSite = async (req, res) => {
-  try {
-    const assignments = Array.isArray(req.body) ? req.body : [req.body];
+  const assignments = Array.isArray(req.body) ? req.body : [req.body];
+  if (!assignments.length) {
+    return res.status(400).json({ status: 'error', message: 'At least one incharge assignment is required' });
+  }
 
-    if (assignments.length === 0) {
+  for (const assignment of assignments) {
+    const { from_date, to_date, pd_id, site_id, emp_id, created_by } = assignment;
+    if (!from_date || !to_date || !pd_id || !site_id || !emp_id || !created_by) {
       return res.status(400).json({
         status: 'error',
-        message: 'At least one incharge assignment is required'
+        message: 'from_date, to_date, pd_id, site_id, emp_id, and created_by are required',
       });
     }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from_date) ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(to_date) ||
+        to_date < from_date) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Valid from_date and to_date are required; to_date cannot be before from_date',
+      });
+    }
+    if (assignment.assignment_mode &&
+        !['in_person', 'on_call'].includes(assignment.assignment_mode)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'assignment_mode must be in_person or on_call',
+      });
+    }
+    if (typeof created_by !== 'string' || !created_by.trim() || created_by.length > 30) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'created_by must be a non-empty string with maximum length of 30 characters',
+      });
+    }
+  }
 
+  let connection;
+  let transactionStarted = false;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
     const insertedIds = [];
-    for (const { from_date, to_date, pd_id, site_id, emp_id, desc_id, created_by } of assignments) {
-      // Validate required fields
-      if (!from_date || !to_date || !pd_id || !site_id || !emp_id || !created_by) {
+
+    for (const assignment of assignments) {
+      const {
+        from_date, to_date, pd_id, site_id, emp_id, desc_id, created_by,
+        assignment_mode = 'in_person',
+      } = assignment;
+      const [employee] = await connection.query(
+        'SELECT emp_id FROM employee_master WHERE emp_id = ?',
+        [emp_id]
+      );
+      if (!employee.length) {
+        await connection.rollback();
+        transactionStarted = false;
         return res.status(400).json({
           status: 'error',
-          message: 'Missing required fields: from_date, to_date, pd_id, site_id, emp_id, and created_by are required'
+          message: `Employee ${emp_id} does not exist`,
         });
       }
 
-      // Validate date formats
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(from_date) || !/^\d{4}-\d{2}-\d{2}$/.test(to_date)) {
-        return res.status(400).json({
-          status: 'error',
-          message: 'Invalid date format: from_date and to_date must be in YYYY-MM-DD format'
-        });
-      }
-
-      // Validate date logic
-      const fromDate = new Date(from_date);
-      const toDate = new Date(to_date);
-      if (toDate < fromDate) {
-        return res.status(400).json({
-          status: 'error',
-          message: 'to_date must be after from_date'
-        });
-      }
-
-      // Validate emp_id
-      const [employee] = await db.query('SELECT emp_id FROM employee_master WHERE emp_id = ?', [emp_id]);
-      if (employee.length === 0) {
-        return res.status(400).json({
-          status: 'error',
-          message: `Invalid emp_id: ${emp_id} does not exist in employee_master`
-        });
-      }
-
-      // Validate desc_id if provided
       if (desc_id) {
-        const [desc] = await db.query('SELECT desc_id FROM work_descriptions WHERE desc_id = ?', [desc_id]);
-        if (desc.length === 0) {
+        const [description] = await connection.query(
+          'SELECT desc_id FROM work_descriptions WHERE desc_id = ?',
+          [desc_id]
+        );
+        if (!description.length) {
+          await connection.rollback();
+          transactionStarted = false;
           return res.status(400).json({
             status: 'error',
-            message: `Invalid desc_id: ${desc_id} does not exist in work_descriptions`
+            message: `Work description ${desc_id} does not exist`,
           });
         }
       }
 
-      // Validate created_by format (VARCHAR(30))
-      if (typeof created_by !== 'string' || created_by.trim() === '' || created_by.length > 30) {
-        return res.status(400).json({
+      if (assignment_mode === 'in_person') {
+        const [conflicts] = await connection.query(
+          `SELECT sia.id, pd.project_name, sd.site_name
+           FROM siteincharge_assign sia
+           LEFT JOIN project_details pd ON pd.pd_id = sia.pd_id
+           LEFT JOIN site_details sd ON sd.site_id = sia.site_id
+           WHERE sia.emp_id = ?
+             AND sia.assignment_mode = 'in_person'
+             AND (sia.pd_id <> ? OR sia.site_id <> ?)
+             AND sia.from_date <= ?
+             AND COALESCE(sia.to_date, '9999-12-31') >= ?
+           LIMIT 1`,
+          [emp_id, pd_id, site_id, to_date, from_date]
+        );
+        if (conflicts.length) {
+          await connection.rollback();
+          transactionStarted = false;
+          return res.status(409).json({
+            status: 'error',
+            message: `${emp_id} already has an in-person assignment overlapping these dates. Choose On-call for the additional site/project.`,
+            conflict: conflicts[0],
+          });
+        }
+      }
+
+      const [duplicate] = await connection.query(
+        `SELECT id FROM siteincharge_assign
+         WHERE pd_id = ? AND site_id = ? AND emp_id = ?
+           AND (desc_id <=> ?)
+           AND from_date <= ? AND COALESCE(to_date, '9999-12-31') >= ?
+         LIMIT 1`,
+        [pd_id, site_id, emp_id, desc_id || null, to_date, from_date]
+      );
+      if (duplicate.length) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(409).json({
           status: 'error',
-          message: 'Invalid created_by: must be a non-empty string with maximum length of 30 characters'
+          message: `${emp_id} is already assigned to this site and work for overlapping dates.`,
         });
       }
 
-      // Optional: Validate created_by against a reference table (e.g., employee_master or users)
-      // Uncomment and adjust if created_by references a specific table
-      /*
-      const [createdBy] = await db.query('SELECT emp_id FROM employee_master WHERE emp_id = ?', [created_by]);
-      if (createdBy.length === 0) {
-        return res.status(400).json({
-          status: 'error',
-          message: `Invalid created_by: ${created_by} does not exist in employee_master`
-        });
-      }
-      */
-
-      // Insert into siteincharge_assign
-      const [result] = await db.query(
-        'INSERT INTO siteincharge_assign (from_date, to_date, pd_id, site_id, desc_id, emp_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [from_date, to_date, pd_id, site_id, desc_id || null, emp_id, created_by]
+      const [result] = await connection.query(
+        `INSERT INTO siteincharge_assign
+         (from_date, to_date, pd_id, site_id, desc_id, emp_id, assignment_mode, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [from_date, to_date, pd_id, site_id, desc_id || null, emp_id, assignment_mode, created_by]
       );
       insertedIds.push(result.insertId);
     }
 
-    res.status(201).json({
+    await connection.commit();
+    transactionStarted = false;
+    return res.status(201).json({
       status: 'success',
       message: 'Incharges assigned to site successfully',
-      data: { insertedIds }
+      data: { insertedIds },
     });
   } catch (error) {
-    console.error('Error in assignInchargeToSite:', {
-      message: error.message,
-      sqlMessage: error.sqlMessage || 'No SQL message available',
-      stack: error.stack
-    });
+    if (transactionStarted && connection) await connection.rollback();
+    console.error('Error in assignInchargeToSite:', error);
     if (error.code === 'ER_NO_REFERENCED_ROW_2') {
       return res.status(400).json({
         status: 'error',
-        message: 'Invalid pd_id, site_id, desc_id, emp_id, or created_by: referenced record does not exist'
+        message: 'Invalid project, site, work description, employee, or user reference',
       });
     }
-    if (error.code === 'ER_BAD_FIELD_ERROR') {
-      return res.status(500).json({
-        status: 'error',
-        message: 'Database schema error: check table structure for siteincharge_assign',
-        error: error.message,
-        sqlMessage: error.sqlMessage || 'No SQL message available'
-      });
-    }
-    res.status(500).json({
+    return res.status(500).json({
       status: 'error',
-      message: 'Internal server error',
-      error: error.message,
-      sqlMessage: error.sqlMessage || 'No SQL message available'
+      message: 'Failed to assign site incharge',
     });
+  } finally {
+    if (connection) connection.release();
   }
 };
 
@@ -390,17 +445,20 @@ exports.addEmployee = async (req, res) => {
   try {
     const {
       emp_id, full_name, gender_id, date_of_birth, date_of_joining, status_id,
-      company, dept_id, emp_type_id, designation_id, branch,
+      dept_id, emp_type_id, designation_id,
       mobile, company_email, current_address, permanent_address,
-      esic_number, pf_number, approved_salary, created_by // Added created_by
+      user_password, esic_number, pf_number, approved_salary, created_by
     } = req.body;
+    const company = 'Sathya Coatings';
+    const branch = '';
+    const loginEmail = typeof company_email === 'string' ? company_email.trim() : '';
 
     // Check for missing required fields
     if (
       !emp_id || !full_name || !gender_id || !date_of_birth || !date_of_joining ||
       !status_id || !company || !dept_id || !emp_type_id || !designation_id ||
-      !branch || !mobile || !company_email || !current_address || !permanent_address ||
-      !approved_salary || !created_by // Added to required check
+      !mobile || !loginEmail || !current_address || !permanent_address ||
+      !approved_salary || !created_by || !user_password
     ) {
       return res.status(400).json({
         status: 'error',
@@ -428,10 +486,19 @@ exports.addEmployee = async (req, res) => {
 
     // Validate email
     const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    if (!emailRegex.test(company_email)) {
+    if (!emailRegex.test(loginEmail)) {
       return res.status(400).json({
         status: 'error',
         message: 'Invalid email format',
+      });
+    }
+
+    if (typeof user_password !== 'string' ||
+        user_password.length < 8 ||
+        Buffer.byteLength(user_password, 'utf8') > 72) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Password must be at least 8 characters and no more than 72 bytes',
       });
     }
 
@@ -470,7 +537,7 @@ exports.addEmployee = async (req, res) => {
       });
     }
 
-    const [existingEmail] = await db.query('SELECT company_email FROM employee_master WHERE company_email = ?', [company_email]);
+    const [existingEmail] = await db.query('SELECT company_email FROM employee_master WHERE company_email = ?', [loginEmail]);
     if (existingEmail.length > 0) {
       return res.status(400).json({
         status: 'error',
@@ -503,11 +570,33 @@ exports.addEmployee = async (req, res) => {
       });
     }
 
-    const [designation] = await db.query('SELECT id FROM emp_designation WHERE id = ?', [designation_id]);
+    const [designation] = await db.query(
+      'SELECT id, designation FROM emp_designation WHERE id = ?',
+      [designation_id]
+    );
     if (designation.length === 0) {
       return res.status(400).json({
         status: 'error',
         message: 'Invalid designation_id: designation does not exist',
+      });
+    }
+
+    const roleName = getEmployeeRoleName(designation[0].designation);
+    if (!roleName) {
+      return res.status(400).json({
+        status: 'error',
+        message: `No login role is configured for the ${designation[0].designation} designation`,
+      });
+    }
+
+    const [roles] = await db.query(
+      'SELECT role_id FROM roles WHERE LOWER(role_name) = ?',
+      [roleName]
+    );
+    if (roles.length === 0) {
+      return res.status(500).json({
+        status: 'error',
+        message: `The ${roleName} role is not configured in the database`,
       });
     }
 
@@ -519,33 +608,67 @@ exports.addEmployee = async (req, res) => {
       });
     }
 
-    // Insert employee
-    const [result] = await db.query(
-      `INSERT INTO employee_master (
-        emp_id, full_name, gender_id, date_of_birth, date_of_joining, status_id,
-        company, dept_id, emp_type_id, designation_id, branch,
-        mobile, company_email, current_address, permanent_address,
-        esic_number, pf_number, approved_salary, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        emp_id, full_name, gender_id, date_of_birth, date_of_joining, status_id,
-        company, dept_id, emp_type_id, designation_id, branch,
-        mobile, company_email, current_address, permanent_address,
-        esic_number || null, pf_number || null, parseFloat(approved_salary), created_by // Handle optional fields and convert salary to float, add created_by
-      ]
-    );
+    const hashedPassword = await bcrypt.hash(user_password, 12);
+    const connection = await db.getConnection();
+    let transactionStarted = false;
+    try {
+      await connection.beginTransaction();
+      transactionStarted = true;
 
-    res.status(201).json({
-      status: 'success',
-      message: 'Employee added successfully',
-      data: { emp_id, full_name, designation_id, status_id, approved_salary },
-    });
+      await connection.query(
+        `INSERT INTO employee_master (
+          emp_id, full_name, gender_id, date_of_birth, date_of_joining, status_id,
+          company, dept_id, emp_type_id, designation_id, branch,
+          mobile, company_email, current_address, permanent_address,
+          esic_number, pf_number, approved_salary, created_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          emp_id, full_name, gender_id, date_of_birth, date_of_joining, status_id,
+          company, dept_id, emp_type_id, designation_id, branch,
+          mobile, loginEmail, current_address, permanent_address,
+          esic_number || null, pf_number || null, parseFloat(approved_salary), created_by
+        ]
+      );
+
+      const [userResult] = await connection.query(
+        `INSERT INTO users (user_name, user_email, user_password, role_id)
+         VALUES (?, ?, ?, ?)`,
+        [loginEmail, loginEmail, hashedPassword, roles[0].role_id]
+      );
+
+      await connection.commit();
+      transactionStarted = false;
+
+      res.status(201).json({
+        status: 'success',
+        message: 'Employee and login account added successfully',
+        data: {
+          emp_id,
+          full_name,
+          designation_id,
+          status_id,
+          approved_salary,
+          user_id: userResult.insertId,
+          user_name: loginEmail,
+          user_email: loginEmail,
+          role_id: roles[0].role_id,
+          role_name: roleName,
+        },
+      });
+    } catch (error) {
+      if (transactionStarted) {
+        await connection.rollback();
+      }
+      throw error;
+    } finally {
+      connection.release();
+    }
   } catch (error) {
     console.error('Error adding employee:', error.message, error.stack);
     if (error.code === 'ER_DUP_ENTRY') {
       return res.status(400).json({
         status: 'error',
-        message: 'Employee ID or email already exists',
+        message: 'Employee ID or company email already exists',
       });
     }
     if (error.code === 'ER_NO_REFERENCED_ROW_2') {
@@ -562,8 +685,356 @@ exports.addEmployee = async (req, res) => {
   }
 };
 
+exports.updateEmployeeLogin = async (req, res) => {
+  const { empId } = req.params;
+  const { user_password } = req.body;
+  if (user_password !== undefined &&
+      user_password !== '' &&
+      (typeof user_password !== 'string' ||
+       user_password.length < 8 ||
+       Buffer.byteLength(user_password, 'utf8') > 72)) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'A new password must be at least 8 characters and no more than 72 bytes',
+    });
+  }
+
+  let connection;
+  let transactionStarted = false;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
+
+    const [employees] = await connection.query(
+      `SELECT em.company_email, ed.designation
+       FROM employee_master em
+       JOIN emp_designation ed ON ed.id = em.designation_id
+       WHERE em.emp_id = ?
+       FOR UPDATE`,
+      [empId]
+    );
+    if (!employees.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(404).json({ status: 'error', message: 'Employee not found' });
+    }
+    const loginEmail = employees[0].company_email.trim();
+
+    const roleName = getEmployeeRoleName(employees[0].designation);
+    if (!roleName) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(400).json({
+        status: 'error',
+        message: `No login role is configured for the ${employees[0].designation} designation`,
+      });
+    }
+
+    const [roles] = await connection.query(
+      'SELECT role_id FROM roles WHERE LOWER(role_name) = ?',
+      [roleName]
+    );
+    if (!roles.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(500).json({
+        status: 'error',
+        message: `The ${roleName} role is not configured in the database`,
+      });
+    }
+
+    const [accounts] = await connection.query(
+      'SELECT user_id FROM users WHERE user_email = ? FOR UPDATE',
+      [loginEmail]
+    );
+    const passwordHash = user_password
+      ? await bcrypt.hash(user_password, 12)
+      : null;
+
+    if (accounts.length) {
+      if (passwordHash) {
+        await connection.query(
+          `UPDATE users
+           SET user_name = ?, user_email = ?, user_password = ?, role_id = ?
+           WHERE user_id = ?`,
+          [loginEmail, loginEmail, passwordHash, roles[0].role_id, accounts[0].user_id]
+        );
+      } else {
+        await connection.query(
+          `UPDATE users
+           SET user_name = ?, user_email = ?, role_id = ?
+           WHERE user_id = ?`,
+          [loginEmail, loginEmail, roles[0].role_id, accounts[0].user_id]
+        );
+      }
+    } else {
+      if (!passwordHash) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(400).json({
+          status: 'error',
+          message: 'Set a password to create a login account for this employee',
+        });
+      }
+      await connection.query(
+        `INSERT INTO users (user_name, user_email, user_password, role_id)
+         VALUES (?, ?, ?, ?)`,
+        [
+          loginEmail,
+          loginEmail,
+          passwordHash,
+          roles[0].role_id
+        ]
+      );
+    }
+
+    await connection.commit();
+    transactionStarted = false;
+    return res.status(200).json({
+      status: 'success',
+      message: 'Employee login details updated successfully',
+      data: {
+        emp_id: empId,
+        user_name: loginEmail,
+        user_email: loginEmail,
+        role_id: roles[0].role_id,
+        role_name: roleName,
+        password_updated: Boolean(passwordHash),
+      },
+    });
+  } catch (error) {
+    if (transactionStarted && connection) {
+      await connection.rollback();
+    }
+    console.error('Error updating employee login details:', error);
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'A login account already exists for this email address',
+      });
+    }
+    return res.status(500).json({
+      status: 'error',
+      message: 'Failed to update employee login details',
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+exports.updateInchargeAssignmentForDate = async (req, res) => {
+  const assignmentId = Number(req.params.assignmentId);
+  const { assignment_date, emp_id, assignment_mode, updated_by } = req.body;
+  if (!Number.isInteger(assignmentId) || assignmentId <= 0 ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(assignment_date || '') ||
+      !emp_id || !['in_person', 'on_call'].includes(assignment_mode) ||
+      !updated_by) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Valid assignment, date, employee, assignment mode, and updated_by are required',
+    });
+  }
+
+  let connection;
+  let transactionStarted = false;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
+    const [rows] = await connection.query(
+      'SELECT * FROM siteincharge_assign WHERE id = ? FOR UPDATE',
+      [assignmentId]
+    );
+    if (!rows.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(404).json({ status: 'error', message: 'Assignment not found' });
+    }
+
+    const assignment = rows[0];
+    if (assignment_date < toSqlDateString(assignment.from_date) ||
+        (assignment.to_date && assignment_date > toSqlDateString(assignment.to_date))) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(400).json({
+        status: 'error',
+        message: 'The selected date is outside this assignment period',
+      });
+    }
+
+    const [attendance] = await connection.query(
+      `SELECT id FROM finance_siteincharge_attendance
+       WHERE siteincharge_assign_id = ? AND entry_date = ?
+       UNION ALL
+       SELECT id FROM finance_siteincharge_attendance_history
+       WHERE siteincharge_assign_id = ? AND entry_date = ?
+       LIMIT 1`,
+      [assignmentId, assignment_date, assignmentId, assignment_date]
+    );
+    if (attendance.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(409).json({
+        status: 'error',
+        message: 'This date already has attendance recorded. Keep the assignment unchanged to preserve payroll history.',
+      });
+    }
+
+    const [employee] = await connection.query(
+      'SELECT emp_id FROM employee_master WHERE emp_id = ?',
+      [emp_id]
+    );
+    if (!employee.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(400).json({ status: 'error', message: 'Selected employee does not exist' });
+    }
+
+    if (assignment_mode === 'in_person') {
+      const [conflicts] = await connection.query(
+        `SELECT id FROM siteincharge_assign
+         WHERE emp_id = ?
+           AND assignment_mode = 'in_person'
+           AND id <> ?
+           AND (pd_id <> ? OR site_id <> ?)
+           AND from_date <= ?
+           AND COALESCE(to_date, '9999-12-31') >= ?
+         LIMIT 1`,
+        [emp_id, assignmentId, assignment.pd_id, assignment.site_id, assignment_date, assignment_date]
+      );
+      if (conflicts.length) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(409).json({
+          status: 'error',
+          message: 'This employee already has an in-person assignment on that date. Choose On-call for another project/site.',
+        });
+      }
+    }
+
+    const [duplicate] = await connection.query(
+      `SELECT id FROM siteincharge_assign
+       WHERE pd_id = ? AND site_id = ? AND emp_id = ?
+         AND (desc_id <=> ?)
+         AND id <> ?
+         AND from_date <= ? AND COALESCE(to_date, '9999-12-31') >= ?
+       LIMIT 1`,
+      [
+        assignment.pd_id, assignment.site_id, emp_id, assignment.desc_id,
+        assignmentId, assignment_date, assignment_date,
+      ]
+    );
+    if (duplicate.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(409).json({
+        status: 'error',
+        message: 'This employee is already assigned to this site and work for that date.',
+      });
+    }
+
+    const startDate = toSqlDateString(assignment.from_date);
+    const endDate = assignment.to_date ? toSqlDateString(assignment.to_date) : null;
+    if (startDate < assignment_date) {
+      const [beforeResult] = await connection.query(
+        `INSERT INTO siteincharge_assign
+         (pd_id, site_id, desc_id, emp_id, from_date, to_date, assignment_mode, created_by, created_at, updated_by)
+         VALUES (?, ?, ?, ?, ?, DATE_SUB(?, INTERVAL 1 DAY), ?, ?, ?, ?)`,
+        [
+          assignment.pd_id, assignment.site_id, assignment.desc_id, assignment.emp_id,
+          startDate, assignment_date, assignment.assignment_mode || 'in_person',
+          assignment.created_by, assignment.created_at, updated_by,
+        ]
+      );
+      await connection.query(
+        `UPDATE finance_siteincharge_attendance
+         SET siteincharge_assign_id = ?
+         WHERE siteincharge_assign_id = ? AND entry_date < ?`,
+        [beforeResult.insertId, assignmentId, assignment_date]
+      );
+      await connection.query(
+        `UPDATE finance_siteincharge_attendance_history
+         SET siteincharge_assign_id = ?
+         WHERE siteincharge_assign_id = ? AND entry_date < ?`,
+        [beforeResult.insertId, assignmentId, assignment_date]
+      );
+    }
+    if (!endDate || endDate > assignment_date) {
+      const [afterResult] = await connection.query(
+        `INSERT INTO siteincharge_assign
+         (pd_id, site_id, desc_id, emp_id, from_date, to_date, assignment_mode, created_by, created_at, updated_by)
+         VALUES (?, ?, ?, ?, DATE_ADD(?, INTERVAL 1 DAY), ?, ?, ?, ?, ?)`,
+        [
+          assignment.pd_id, assignment.site_id, assignment.desc_id, assignment.emp_id,
+          assignment_date, endDate, assignment.assignment_mode || 'in_person',
+          assignment.created_by, assignment.created_at, updated_by,
+        ]
+      );
+      await connection.query(
+        `UPDATE finance_siteincharge_attendance
+         SET siteincharge_assign_id = ?
+         WHERE siteincharge_assign_id = ? AND entry_date > ?`,
+        [afterResult.insertId, assignmentId, assignment_date]
+      );
+      await connection.query(
+        `UPDATE finance_siteincharge_attendance_history
+         SET siteincharge_assign_id = ?
+         WHERE siteincharge_assign_id = ? AND entry_date > ?`,
+        [afterResult.insertId, assignmentId, assignment_date]
+      );
+    }
+    await connection.query(
+      `UPDATE siteincharge_assign
+       SET emp_id = ?, from_date = ?, to_date = ?, assignment_mode = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [emp_id, assignment_date, assignment_date, assignment_mode, String(updated_by), assignmentId]
+    );
+
+    await connection.commit();
+    transactionStarted = false;
+    return res.status(200).json({
+      status: 'success',
+      message: 'Assignment updated for the selected date',
+      data: { id: assignmentId, assignment_date, emp_id, assignment_mode },
+    });
+  } catch (error) {
+    if (transactionStarted && connection) await connection.rollback();
+    console.error('Error updating site incharge assignment:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Failed to update assignment for the selected date',
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
 exports.getAssignedIncharges = async (req, res) => {
   try {
+    const { pd_id, site_id, desc_id, date, from_date, to_date } = req.query;
+    const conditions = [];
+    const params = [];
+    if (pd_id) {
+      conditions.push('sia.pd_id = ?');
+      params.push(pd_id);
+    }
+    if (site_id) {
+      conditions.push('sia.site_id = ?');
+      params.push(site_id);
+    }
+    if (desc_id) {
+      conditions.push('sia.desc_id = ?');
+      params.push(desc_id);
+    }
+    if (date) {
+      conditions.push('sia.from_date <= ? AND COALESCE(sia.to_date, "9999-12-31") >= ?');
+      params.push(date, date);
+    } else if (from_date && to_date) {
+      conditions.push('sia.from_date <= ? AND COALESCE(sia.to_date, "9999-12-31") >= ?');
+      params.push(to_date, from_date);
+    }
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const [rows] = await db.query(`
       SELECT 
         sia.id,
@@ -577,8 +1048,9 @@ exports.getAssignedIncharges = async (req, res) => {
         COALESCE(edg.designation, 'Unknown') AS designation,
         COALESCE(em.mobile, 'Unknown') AS mobile,
         COALESCE(es.status, 'Unknown') AS status,
-        sia.from_date,
-        sia.to_date,
+        DATE_FORMAT(sia.from_date, '%Y-%m-%d') AS from_date,
+        DATE_FORMAT(sia.to_date, '%Y-%m-%d') AS to_date,
+        sia.assignment_mode,
         COALESCE(em.company_email, 'Unknown') AS company_email,
         COALESCE(em.current_address, 'Unknown') AS current_address,
         COALESCE(em.permanent_address, 'Unknown') AS permanent_address,
@@ -591,8 +1063,9 @@ exports.getAssignedIncharges = async (req, res) => {
       LEFT JOIN emp_designation edg ON em.designation_id = edg.id
       LEFT JOIN emp_status es ON em.status_id = es.id
       LEFT JOIN emp_department ed ON em.dept_id = ed.id
+      ${whereClause}
       ORDER BY sia.from_date DESC
-    `);
+    `, params);
 
     if (!rows || rows.length === 0) {
       return res.status(200).json({

@@ -184,6 +184,9 @@ const ViewAssignedIncharges = ({ selectedSite }) => {
                       Status
                     </th>
                     <th className="px-6 py-3 text-left text-base font-medium text-gray-500">
+                      Assignment Type
+                    </th>
+                    <th className="px-6 py-3 text-left text-base font-medium text-gray-500">
                       Working Date
                     </th>
                   </tr>
@@ -214,6 +217,9 @@ const ViewAssignedIncharges = ({ selectedSite }) => {
                       </td>
                       <td className="px-6 py-4 text-base text-gray-700">
                         {incharge.status || "N/A"}
+                      </td>
+                      <td className="px-6 py-4 text-base text-gray-700">
+                        {incharge.assignment_mode === "on_call" ? "On-call" : "In-person"}
                       </td>
                       <td className="px-6 py-4 text-base text-gray-700">
                         <div>

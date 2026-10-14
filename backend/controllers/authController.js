@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
 const authModel = require("../models/authModel");
 
 exports.login = async (req, res) => {
@@ -15,8 +16,11 @@ exports.login = async (req, res) => {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
-    // Compare plain-text password
-    if (password !== user.user_password) {
+    const isHashedPassword = /^\$2[aby]\$/.test(user.user_password);
+    const passwordMatches = isHashedPassword
+      ? await bcrypt.compare(password, user.user_password)
+      : password === user.user_password;
+    if (!passwordMatches) {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 

@@ -1022,6 +1022,22 @@ exports.getContractors = async (req, res) => {
   }
 };
 
+exports.getSiteEngineers = async (req, res) => {
+  try {
+    const [siteEngineers] = await db.query(
+      `SELECT em.emp_id, em.full_name
+       FROM employee_master em
+       JOIN emp_designation ed ON ed.id = em.designation_id
+       WHERE LOWER(TRIM(ed.designation)) = 'site engineer'
+       ORDER BY em.full_name`
+    );
+    res.status(200).json({ success: true, data: siteEngineers });
+  } catch (error) {
+    console.error("Error fetching site engineers:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch site engineers" });
+  }
+};
+
 // Save labour data
 // exports.addLabour = async (req, res) => {
 //   const {
@@ -1074,18 +1090,36 @@ exports.getContractors = async (req, res) => {
 
 exports.addLabour = async (req, res) => {
   const {
-    full_name, date_of_birth, date_of_joining, company, branch, mobile, company_email,
-    current_address, permanent_address, gender_id, dept_id, emp_type_id, designation_id,
-    status_id, esic_number, pf_number, contractor_id, approved_salary, created_by
+    full_name, date_of_birth, date_of_joining, mobile, company_email,
+    current_address, permanent_address, gender_id, emp_type_id, designation_id,
+    status_id, esic_number, pf_number, site_engineer_emp_id, aadhaar_number,
+    approved_salary, created_by
   } = req.body;
+  const company = "Sathya Coatings";
 
   // Validate required fields
-  if (!full_name || !date_of_birth || !date_of_joining || !company || !branch || !mobile ||
-      !company_email || !current_address || !permanent_address || !gender_id || !dept_id ||
-      !emp_type_id || !designation_id || !status_id || !created_by) {
+  if (!full_name || !date_of_birth || !date_of_joining || !mobile ||
+      !company_email || !current_address || !permanent_address || !gender_id ||
+      !emp_type_id || !designation_id || !status_id || !site_engineer_emp_id ||
+      !aadhaar_number || !approved_salary || !created_by) {
     return res.status(400).json({
       success: false,
       message: "Missing required fields"
+    });
+  }
+
+  if (!/^\d{12}$/.test(String(aadhaar_number))) {
+    return res.status(400).json({
+      success: false,
+      message: "Aadhaar number must contain exactly 12 digits"
+    });
+  }
+
+  const salaryValue = Number(approved_salary);
+  if (!Number.isFinite(salaryValue) || salaryValue <= 0 || !/^\d+(\.\d{1,2})?$/.test(String(approved_salary))) {
+    return res.status(400).json({
+      success: false,
+      message: "Approved salary per shift must be a positive number with up to 2 decimal places"
     });
   }
 
@@ -1131,6 +1165,20 @@ exports.addLabour = async (req, res) => {
     });
   }
 
+  const [siteEngineer] = await db.query(
+    `SELECT em.emp_id
+     FROM employee_master em
+     JOIN emp_designation ed ON ed.id = em.designation_id
+     WHERE em.emp_id = ? AND LOWER(TRIM(ed.designation)) = 'site engineer'`,
+    [site_engineer_emp_id]
+  );
+  if (!siteEngineer.length) {
+    return res.status(400).json({
+      success: false,
+      message: "Selected employee is not a valid Site Engineer"
+    });
+  }
+
   // Validate foreign keys (add similar checks as in addEmployee if needed)
   // Assuming similar foreign key validations for gender_id, dept_id, etc.
 
@@ -1140,20 +1188,29 @@ exports.addLabour = async (req, res) => {
       `INSERT INTO labour (
         full_name, date_of_birth, date_of_joining, company, branch, mobile, company_email,
         current_address, permanent_address, gender_id, dept_id, emp_type_id, designation_id,
-        status_id, esic_number, pf_number, contractor_id, approved_salary, created_by, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        status_id, esic_number, pf_number, contractor_id, approved_salary, created_by, created_at,
+        site_engineer_emp_id, aadhaar_number
+      ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, NOW(), ?, ?)`,
       [
-        full_name, date_of_birth, date_of_joining, company, branch, mobile, company_email,
-        current_address, permanent_address, gender_id, dept_id, emp_type_id, designation_id,
-        status_id, esic_number || null, pf_number || null, contractor_id || null,
-        approved_salary || null, created_by
+        full_name, date_of_birth, date_of_joining, company, mobile, company_email,
+        current_address, permanent_address, gender_id, emp_type_id, designation_id,
+        status_id, esic_number || null, pf_number || null, salaryValue, created_by,
+        site_engineer_emp_id, aadhaar_number
       ]
     );
 
     res.status(201).json({
       success: true,
       message: "Labour added successfully",
-      data: { id: result.insertId, ...req.body }
+      data: {
+        id: result.insertId,
+        ...req.body,
+        company,
+        branch: null,
+        dept_id: null,
+        contractor_id: null,
+        approved_salary: salaryValue
+      }
     });
   } catch (error) {
     console.error("Error adding labour:", error);
@@ -1174,6 +1231,225 @@ exports.addLabour = async (req, res) => {
       message: "Failed to add labour",
       error: error.message
     });
+  }
+};
+
+exports.importLabours = async (req, res) => {
+  const { labours, created_by } = req.body;
+  const company = "Sathya Coatings";
+
+  if (!Array.isArray(labours) || labours.length === 0 || labours.length > 500) {
+    return res.status(400).json({
+      success: false,
+      message: "Upload must contain between 1 and 500 labour rows",
+    });
+  }
+
+  if (typeof created_by !== "string" || !created_by.trim()) {
+    return res.status(400).json({
+      success: false,
+      message: "Created By is required",
+    });
+  }
+
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    const [userExists] = await connection.query(
+      "SELECT user_id FROM users WHERE user_id = ?",
+      [created_by]
+    );
+    if (!userExists.length) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Created By: User does not exist",
+      });
+    }
+
+    const [[genders], [employmentTypes], [designations], [statuses]] = await Promise.all([
+      connection.query("SELECT id, gender AS name FROM emp_gender"),
+      connection.query("SELECT id, type AS name FROM employment_type"),
+      connection.query("SELECT id, designation AS name FROM emp_designation"),
+      connection.query("SELECT id, status AS name FROM emp_status"),
+    ]);
+
+    const makeLookup = (rows) => new Map(
+      rows.map((row) => [row.name.trim().toLowerCase(), row.id])
+    );
+    const lookupMaps = {
+      gender: makeLookup(genders),
+      employment_type: makeLookup(employmentTypes),
+      designation: makeLookup(designations),
+      status: makeLookup(statuses),
+    };
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    const mobileRegex = /^(?:\+91)?\d{10}$/;
+    const aadhaarRegex = /^\d{12}$/;
+    const esicRegex = /^\d{17}$/;
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    const salaryRegex = /^\d+(\.\d{1,2})?$/;
+    const rowErrors = [];
+    const normalizedLabours = [];
+    const uploadedEmails = new Set();
+    const uploadedAadhaars = new Set();
+
+    const text = (value) => value === null || value === undefined ? "" : String(value).trim();
+    const isRealDate = (value) => {
+      if (!dateRegex.test(value)) return false;
+      const date = new Date(`${value}T00:00:00Z`);
+      return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+    };
+
+    labours.forEach((row, index) => {
+      const spreadsheetRow = Number.isInteger(row?._spreadsheet_row) ? row._spreadsheet_row : index + 2;
+      const labour = {
+        full_name: text(row?.full_name),
+        date_of_birth: text(row?.date_of_birth),
+        date_of_joining: text(row?.date_of_joining),
+        mobile: text(row?.mobile),
+        company_email: text(row?.company_email).toLowerCase(),
+        current_address: text(row?.current_address),
+        permanent_address: text(row?.permanent_address),
+        gender_id: lookupMaps.gender.get(text(row?.gender).toLowerCase()),
+        emp_type_id: lookupMaps.employment_type.get(text(row?.employment_type).toLowerCase()),
+        designation_id: lookupMaps.designation.get(text(row?.designation).toLowerCase()),
+        status_id: lookupMaps.status.get(text(row?.status).toLowerCase()),
+        site_engineer_emp_id: text(row?.site_engineer_emp_id),
+        aadhaar_number: text(row?.aadhaar_number),
+        approved_salary: text(row?.approved_salary),
+        esic_number: text(row?.esic_number) || null,
+        pf_number: text(row?.pf_number) || null,
+      };
+      const errors = [];
+
+      for (const field of ["full_name", "mobile", "company_email", "current_address",
+        "permanent_address", "site_engineer_emp_id", "aadhaar_number", "approved_salary"]) {
+        if (!labour[field]) errors.push(`${field.replaceAll("_", " ")} is required`);
+      }
+      if (!isRealDate(labour.date_of_birth)) errors.push("date of birth must be a valid YYYY-MM-DD date");
+      if (!isRealDate(labour.date_of_joining)) errors.push("date of joining must be a valid YYYY-MM-DD date");
+      if (labour.mobile && !mobileRegex.test(labour.mobile)) errors.push("mobile must be 10 digits, optionally prefixed by +91");
+      if (labour.company_email && !emailRegex.test(labour.company_email)) errors.push("company email is invalid");
+      if (!labour.gender_id) errors.push(`unknown gender "${text(row?.gender)}"`);
+      if (!labour.emp_type_id) errors.push(`unknown employment type "${text(row?.employment_type)}"`);
+      if (!labour.designation_id) errors.push(`unknown designation "${text(row?.designation)}"`);
+      if (!labour.status_id) errors.push(`unknown status "${text(row?.status)}"`);
+      if (labour.aadhaar_number && !aadhaarRegex.test(labour.aadhaar_number)) errors.push("Aadhaar number must contain exactly 12 digits");
+      if (labour.esic_number && !esicRegex.test(labour.esic_number)) errors.push("ESIC number must contain exactly 17 digits");
+      const salary = Number(labour.approved_salary);
+      if (labour.approved_salary && (!Number.isFinite(salary) || salary <= 0 || !salaryRegex.test(labour.approved_salary))) {
+        errors.push("approved salary per shift must be positive with up to 2 decimal places");
+      }
+
+      if (labour.company_email) {
+        if (uploadedEmails.has(labour.company_email)) errors.push("duplicate company email in upload");
+        uploadedEmails.add(labour.company_email);
+      }
+      if (labour.aadhaar_number) {
+        if (uploadedAadhaars.has(labour.aadhaar_number)) errors.push("duplicate Aadhaar number in upload");
+        uploadedAadhaars.add(labour.aadhaar_number);
+      }
+      if (errors.length) {
+        rowErrors.push({ row: spreadsheetRow, errors });
+      } else {
+        normalizedLabours.push({ ...labour, approved_salary: salary, spreadsheet_row: spreadsheetRow });
+      }
+    });
+
+    if (rowErrors.length) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Correct the listed rows and upload again. No labour records were added.",
+        errors: rowErrors,
+      });
+    }
+
+    const engineerIds = [...new Set(normalizedLabours.map((labour) => labour.site_engineer_emp_id))];
+    const [siteEngineers] = await connection.query(
+      `SELECT em.emp_id
+       FROM employee_master em
+       JOIN emp_designation ed ON ed.id = em.designation_id
+       WHERE em.emp_id IN (?) AND LOWER(TRIM(ed.designation)) = 'site engineer'`,
+      [engineerIds]
+    );
+    const validEngineerIds = new Set(siteEngineers.map((row) => row.emp_id));
+    const invalidEngineerRows = normalizedLabours
+      .map((labour) => validEngineerIds.has(labour.site_engineer_emp_id) ? null : {
+        row: labour.spreadsheet_row,
+        errors: [`"${labour.site_engineer_emp_id}" is not a valid Site Engineer employee ID`],
+      })
+      .filter(Boolean);
+    if (invalidEngineerRows.length) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Correct the listed Site Engineer IDs and upload again. No labour records were added.",
+        errors: invalidEngineerRows,
+      });
+    }
+
+    const emails = normalizedLabours.map((labour) => labour.company_email);
+    const aadhaars = normalizedLabours.map((labour) => labour.aadhaar_number);
+    const [existingLabours] = await connection.query(
+      "SELECT company_email, aadhaar_number FROM labour WHERE company_email IN (?) OR aadhaar_number IN (?)",
+      [emails, aadhaars]
+    );
+    const existingEmails = new Set(existingLabours.map((row) => String(row.company_email).toLowerCase()));
+    const existingAadhaars = new Set(existingLabours.map((row) => String(row.aadhaar_number || "")));
+    const duplicateRows = normalizedLabours
+      .map((labour) => {
+        const errors = [];
+        if (existingEmails.has(labour.company_email)) errors.push("company email already exists");
+        if (existingAadhaars.has(labour.aadhaar_number)) errors.push("Aadhaar number already exists");
+        return errors.length ? { row: labour.spreadsheet_row, errors } : null;
+      })
+      .filter(Boolean);
+    if (duplicateRows.length) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Resolve existing duplicate records and upload again. No labour records were added.",
+        errors: duplicateRows,
+      });
+    }
+
+    for (const labour of normalizedLabours) {
+      await connection.query(
+        `INSERT INTO labour (
+          full_name, date_of_birth, date_of_joining, company, branch, mobile, company_email,
+          current_address, permanent_address, gender_id, dept_id, emp_type_id, designation_id,
+          status_id, esic_number, pf_number, contractor_id, approved_salary, created_by,
+          site_engineer_emp_id, aadhaar_number
+        ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+        [
+          labour.full_name, labour.date_of_birth, labour.date_of_joining, company, labour.mobile,
+          labour.company_email, labour.current_address, labour.permanent_address, labour.gender_id,
+          labour.emp_type_id, labour.designation_id, labour.status_id, labour.esic_number,
+          labour.pf_number, labour.approved_salary, created_by, labour.site_engineer_emp_id,
+          labour.aadhaar_number,
+        ]
+      );
+    }
+
+    await connection.commit();
+    return res.status(201).json({
+      success: true,
+      message: `${normalizedLabours.length} labour record(s) imported successfully`,
+      data: { imported_count: normalizedLabours.length },
+    });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error("Error importing labour records:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to import labour records",
+    });
+  } finally {
+    if (connection) connection.release();
   }
 };
 
