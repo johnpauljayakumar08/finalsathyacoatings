@@ -1,4 +1,5 @@
 const db = require("../config/db");
+const bcrypt = require("bcrypt");
 
 // Fetch companies
 exports.getCompanies = async (req, res) => {
@@ -192,6 +193,146 @@ exports.getCompletionEntriesBySite = async (req, res) => {
       status: "error",
       message: "Failed to fetch completion entries",
       error: error.message,
+    });
+  }
+};
+
+exports.getReckonerDailyCostDetails = async (req, res) => {
+  const { project_id, site_id, desc_id, rec_id } = req.query;
+  if (!project_id || !site_id || !desc_id || !rec_id || !/^\d+$/.test(String(rec_id))) {
+    return res.status(400).json({
+      status: "error",
+      message: "project_id, site_id, desc_id, and a valid rec_id are required",
+    });
+  }
+
+  try {
+    const [reckonerRows] = await db.query(
+      `SELECT pr.rec_id
+       FROM po_reckoner pr
+       JOIN site_details sd ON sd.site_id = pr.site_id
+       WHERE pr.rec_id = ? AND pr.site_id = ? AND pr.desc_id = ? AND sd.pd_id = ?`,
+      [rec_id, site_id, desc_id, project_id]
+    );
+    if (!reckonerRows.length) {
+      return res.status(404).json({
+        status: "error",
+        message: "Work item was not found for the selected project, site, and description",
+      });
+    }
+
+    const [completionRows, materialRows, labourRows] = await Promise.all([
+      db.query(
+        `SELECT
+           DATE_FORMAT(entry_date, '%Y-%m-%d') AS entry_date,
+           entry_id,
+           area_added,
+           rate,
+           value_added,
+           remarks
+         FROM completion_entries_history
+         WHERE rec_id = ?
+         ORDER BY entry_date DESC, created_at DESC`,
+        [rec_id]
+      ),
+      db.query(
+        `SELECT
+           DATE_FORMAT(muh.entry_date, '%Y-%m-%d') AS entry_date,
+           muh.entry_id,
+           mm.item_id,
+           mm.item_name,
+           um.uom_name,
+           muh.overall_qty,
+           ma.rate AS unit_rate,
+           ROUND(COALESCE(muh.overall_qty, 0) * COALESCE(ma.rate, 0), 2) AS material_value,
+           muh.remarks
+         FROM material_usage_history muh
+         JOIN material_acknowledgement mack ON mack.id = muh.material_ack_id
+         JOIN material_dispatch md ON md.id = mack.material_dispatch_id
+         JOIN material_assign ma ON ma.id = md.material_assign_id
+         JOIN material_master mm ON mm.item_id = ma.item_id
+         LEFT JOIN uom_master um ON um.uom_id = ma.uom_id
+         WHERE ma.pd_id = ? AND ma.site_id = ? AND ma.desc_id = ?
+         ORDER BY muh.entry_date DESC, muh.created_at DESC`,
+        [project_id, site_id, desc_id]
+      ),
+      db.query(
+        `SELECT
+           DATE_FORMAT(lat.entry_date, '%Y-%m-%d') AS entry_date,
+           lat.id AS attendance_id,
+           la.id AS assignment_id,
+           l.id AS labour_id,
+           l.full_name,
+           lat.shift,
+           COALESCE(NULLIF(la.salary, 0), l.approved_salary, 0) AS shift_rate,
+           ROUND(COALESCE(lat.shift, 0) * COALESCE(NULLIF(la.salary, 0), l.approved_salary, 0), 2) AS labour_cost,
+           lat.remarks
+         FROM labour_attendance lat
+         JOIN labour_assignment la ON la.id = lat.labour_assignment_id
+         JOIN labour l ON l.id = la.labour_id
+         WHERE la.project_id = ? AND la.site_id = ? AND la.desc_id = ?
+         ORDER BY lat.entry_date DESC, l.full_name`,
+        [project_id, site_id, desc_id]
+      ),
+    ]);
+
+    const dailyMap = new Map();
+    const getDay = (date) => {
+      if (!dailyMap.has(date)) {
+        dailyMap.set(date, { entry_date: date, completions: [], materials: [], labour: [] });
+      }
+      return dailyMap.get(date);
+    };
+
+    for (const row of completionRows[0]) {
+      getDay(row.entry_date).completions.push({
+        entry_id: row.entry_id,
+        area_added: Number(row.area_added) || 0,
+        rate: Number(row.rate) || 0,
+        value_added: Number(row.value_added) || 0,
+        remarks: row.remarks,
+      });
+    }
+    for (const row of materialRows[0]) {
+      getDay(row.entry_date).materials.push({
+        entry_id: row.entry_id,
+        item_id: row.item_id,
+        item_name: row.item_name,
+        uom_name: row.uom_name,
+        quantity: Number(row.overall_qty) || 0,
+        unit_rate: Number(row.unit_rate) || 0,
+        material_value: Number(row.material_value) || 0,
+        remarks: row.remarks,
+      });
+    }
+    for (const row of labourRows[0]) {
+      getDay(row.entry_date).labour.push({
+        attendance_id: row.attendance_id,
+        assignment_id: row.assignment_id,
+        labour_id: row.labour_id,
+        full_name: row.full_name,
+        shifts: Number(row.shift) || 0,
+        shift_rate: Number(row.shift_rate) || 0,
+        labour_cost: Number(row.labour_cost) || 0,
+        remarks: row.remarks,
+      });
+    }
+
+    const daily = Array.from(dailyMap.values())
+      .map((day) => ({
+        ...day,
+        completion_value: Number(day.completions.reduce((sum, entry) => sum + entry.value_added, 0).toFixed(2)),
+        material_value: Number(day.materials.reduce((sum, entry) => sum + entry.material_value, 0).toFixed(2)),
+        labour_cost: Number(day.labour.reduce((sum, entry) => sum + entry.labour_cost, 0).toFixed(2)),
+      }))
+      .sort((left, right) => right.entry_date.localeCompare(left.entry_date));
+
+    return res.status(200).json({ status: "success", data: daily });
+  } catch (error) {
+    console.error("Error fetching daily completion and cost details:", error);
+    return res.status(500).json({
+      status: "error",
+      message: "Failed to fetch daily work, material, and labour costs",
     });
   }
 };
@@ -1290,13 +1431,18 @@ exports.importLabours = async (req, res) => {
     const aadhaarRegex = /^\d{12}$/;
     const esicRegex = /^\d{17}$/;
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    const salaryRegex = /^\d+(\.\d{1,2})?$/;
     const rowErrors = [];
     const normalizedLabours = [];
     const uploadedEmails = new Set();
     const uploadedAadhaars = new Set();
 
     const text = (value) => value === null || value === undefined ? "" : String(value).trim();
+    const parseSalary = (value) => {
+      const salaryText = text(value);
+      if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(salaryText)) return null;
+      const salary = Number(salaryText.replace(/,/g, ""));
+      return Number.isFinite(salary) && salary > 0 ? salary : null;
+    };
     const isRealDate = (value) => {
       if (!dateRegex.test(value)) return false;
       const date = new Date(`${value}T00:00:00Z`);
@@ -1339,9 +1485,9 @@ exports.importLabours = async (req, res) => {
       if (!labour.status_id) errors.push(`unknown status "${text(row?.status)}"`);
       if (labour.aadhaar_number && !aadhaarRegex.test(labour.aadhaar_number)) errors.push("Aadhaar number must contain exactly 12 digits");
       if (labour.esic_number && !esicRegex.test(labour.esic_number)) errors.push("ESIC number must contain exactly 17 digits");
-      const salary = Number(labour.approved_salary);
-      if (labour.approved_salary && (!Number.isFinite(salary) || salary <= 0 || !salaryRegex.test(labour.approved_salary))) {
-        errors.push("approved salary per shift must be positive with up to 2 decimal places");
+      const salary = parseSalary(labour.approved_salary);
+      if (labour.approved_salary && salary === null) {
+        errors.push("approved salary per shift must be a positive whole number or have up to 2 decimal places");
       }
 
       if (labour.company_email) {
@@ -1447,6 +1593,267 @@ exports.importLabours = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to import labour records",
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+exports.importEmployees = async (req, res) => {
+  const { employees, created_by } = req.body || {};
+  const company = "Sathya Coatings";
+
+  if (!Array.isArray(employees) || employees.length === 0 || employees.length > 500) {
+    return res.status(400).json({
+      success: false,
+      message: "Upload must contain between 1 and 500 fixed employee rows",
+    });
+  }
+  if (typeof created_by !== "string" || !created_by.trim()) {
+    return res.status(400).json({ success: false, message: "Created By is required" });
+  }
+
+  let connection;
+  let transactionStarted = false;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
+
+    const [userExists] = await connection.query(
+      "SELECT user_id FROM users WHERE user_id = ?",
+      [created_by]
+    );
+    if (!userExists.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Created By: User does not exist",
+      });
+    }
+
+    const [[genders], [departments], [employmentTypes], [designations], [statuses]] = await Promise.all([
+      connection.query("SELECT id, gender AS name FROM emp_gender"),
+      connection.query("SELECT id, department AS name FROM emp_department"),
+      connection.query("SELECT id, type AS name FROM employment_type"),
+      connection.query("SELECT id, designation AS name FROM emp_designation"),
+      connection.query("SELECT id, status AS name FROM emp_status"),
+    ]);
+    const makeLookup = (rows) => new Map(
+      rows.map((row) => [String(row.name).trim().toLowerCase(), row.id])
+    );
+    const lookupMaps = {
+      gender: makeLookup(genders),
+      department: makeLookup(departments),
+      employment_type: makeLookup(employmentTypes),
+      designation: makeLookup(designations),
+      status: makeLookup(statuses),
+    };
+    const designationRoles = {
+      sitesupervisor: "siteincharge",
+      accountant: "accounts_team",
+      hrmanager: "admin",
+      marketingexecutive: "admin",
+      siteengineer: "siteincharge",
+    };
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    const mobileRegex = /^(?:\+91)?\d{10}$/;
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    const rowErrors = [];
+    const normalizedEmployees = [];
+    const uploadedIds = new Set();
+    const uploadedEmails = new Set();
+    const text = (value) => value === null || value === undefined ? "" : String(value).trim();
+    const parseSalary = (value) => {
+      const salaryText = text(value);
+      if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(salaryText)) return null;
+      const salary = Number(salaryText.replace(/,/g, ""));
+      return Number.isFinite(salary) && salary > 0 ? salary : null;
+    };
+    const isRealDate = (value) => {
+      if (!dateRegex.test(value)) return false;
+      const date = new Date(`${value}T00:00:00Z`);
+      return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+    };
+
+    employees.forEach((row, index) => {
+      const spreadsheetRow = Number.isInteger(row?._spreadsheet_row) ? row._spreadsheet_row : index + 2;
+      const designationName = text(row?.designation) || "Site Engineer";
+      const employee = {
+        emp_id: text(row?.emp_id),
+        full_name: text(row?.full_name),
+        date_of_birth: text(row?.date_of_birth),
+        date_of_joining: text(row?.date_of_joining),
+        gender_id: lookupMaps.gender.get(text(row?.gender).toLowerCase()),
+        dept_id: lookupMaps.department.get((text(row?.department) || "Engineering").toLowerCase()),
+        emp_type_id: lookupMaps.employment_type.get((text(row?.employment_type) || "Full-Time").toLowerCase()),
+        designation_id: lookupMaps.designation.get(designationName.toLowerCase()),
+        designation_name: designationName,
+        status_id: lookupMaps.status.get(text(row?.status).toLowerCase()),
+        mobile: text(row?.mobile),
+        company_email: text(row?.company_email).toLowerCase(),
+        user_password: text(row?.user_password),
+        current_address: text(row?.current_address),
+        permanent_address: text(row?.permanent_address),
+        approved_salary: text(row?.approved_salary),
+        esic_number: text(row?.esic_number) || null,
+        pf_number: text(row?.pf_number) || null,
+        spreadsheet_row: spreadsheetRow,
+      };
+      const errors = [];
+
+      for (const field of ["emp_id", "full_name", "mobile", "company_email", "user_password",
+        "current_address", "permanent_address", "approved_salary"]) {
+        if (!employee[field]) errors.push(`${field.replaceAll("_", " ")} is required`);
+      }
+      if (!isRealDate(employee.date_of_birth)) errors.push("date of birth must be a valid YYYY-MM-DD date");
+      if (!isRealDate(employee.date_of_joining)) errors.push("date of joining must be a valid YYYY-MM-DD date");
+      if (!employee.gender_id) errors.push(`unknown gender "${text(row?.gender)}"`);
+      if (!employee.dept_id) errors.push(`unknown department "${text(row?.department) || "Engineering"}"`);
+      if (!employee.emp_type_id) errors.push(`unknown employment type "${text(row?.employment_type) || "Full-Time"}"`);
+      if (!employee.designation_id) errors.push(`unknown designation "${designationName}"`);
+      if (!employee.status_id) errors.push(`unknown status "${text(row?.status)}"`);
+      if (employee.mobile && !mobileRegex.test(employee.mobile)) errors.push("mobile must be 10 digits, optionally prefixed by +91");
+      if (employee.company_email && !emailRegex.test(employee.company_email)) errors.push("company email is invalid");
+      if (employee.user_password && (
+        employee.user_password.length < 8 || Buffer.byteLength(employee.user_password, "utf8") > 72
+      )) errors.push("password must be at least 8 characters and no more than 72 bytes");
+      const salary = parseSalary(employee.approved_salary);
+      if (employee.approved_salary && salary === null) {
+        errors.push("approved salary must be a positive whole number or have up to 2 decimal places");
+      }
+      if (employee.esic_number && !/^\d{17}$/.test(employee.esic_number)) errors.push("ESIC number must contain exactly 17 digits");
+      if (employee.emp_id.length > 30) errors.push("employee ID must be no more than 30 characters");
+
+      if (employee.emp_id) {
+        if (uploadedIds.has(employee.emp_id)) errors.push("duplicate employee ID in upload");
+        uploadedIds.add(employee.emp_id);
+      }
+      if (employee.company_email) {
+        if (uploadedEmails.has(employee.company_email)) errors.push("duplicate company email in upload");
+        uploadedEmails.add(employee.company_email);
+      }
+      if (!designationRoles[designationName.toLowerCase().replace(/[^a-z]/g, "")]) {
+        errors.push(`no login role is configured for designation "${designationName}"`);
+      }
+
+      if (errors.length) {
+        rowErrors.push({ row: spreadsheetRow, errors });
+      } else {
+        normalizedEmployees.push({ ...employee, approved_salary: salary });
+      }
+    });
+
+    if (rowErrors.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(400).json({
+        success: false,
+        message: "Correct the listed rows and upload again. No fixed employees were added.",
+        errors: rowErrors,
+      });
+    }
+
+    const ids = normalizedEmployees.map((employee) => employee.emp_id);
+    const emails = normalizedEmployees.map((employee) => employee.company_email);
+    const [existingEmployees, existingUsers] = await Promise.all([
+      connection.query(
+        "SELECT emp_id, company_email FROM employee_master WHERE emp_id IN (?) OR company_email IN (?)",
+        [ids, emails]
+      ),
+      connection.query("SELECT user_email FROM users WHERE user_email IN (?)", [emails]),
+    ]);
+    const existingIds = new Set(existingEmployees[0].map((row) => String(row.emp_id)));
+    const existingEmails = new Set([
+      ...existingEmployees[0].map((row) => String(row.company_email).toLowerCase()),
+      ...existingUsers[0].map((row) => String(row.user_email).toLowerCase()),
+    ]);
+    const duplicateRows = normalizedEmployees.map((employee) => {
+      const errors = [];
+      if (existingIds.has(employee.emp_id)) errors.push("employee ID already exists");
+      if (existingEmails.has(employee.company_email)) errors.push("company email already exists");
+      return errors.length ? { row: employee.spreadsheet_row, errors } : null;
+    }).filter(Boolean);
+    if (duplicateRows.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(400).json({
+        success: false,
+        message: "Resolve existing duplicate records and upload again. No fixed employees were added.",
+        errors: duplicateRows,
+      });
+    }
+
+    const roleNames = [...new Set(normalizedEmployees.map((employee) =>
+      designationRoles[employee.designation_name.toLowerCase().replace(/[^a-z]/g, "")]
+    ))];
+    const [roles] = await connection.query(
+      "SELECT role_id, LOWER(role_name) AS role_name FROM roles WHERE LOWER(role_name) IN (?)",
+      [roleNames]
+    );
+    const roleIds = new Map(roles.map((role) => [role.role_name, role.role_id]));
+    const missingRoleRows = normalizedEmployees
+      .map((employee) => {
+        const roleName = designationRoles[employee.designation_name.toLowerCase().replace(/[^a-z]/g, "")];
+        return roleIds.has(roleName) ? null : {
+          row: employee.spreadsheet_row,
+          errors: [`login role "${roleName}" is not configured in the database`],
+        };
+      })
+      .filter(Boolean);
+    if (missingRoleRows.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(400).json({
+        success: false,
+        message: "Configure the listed employee login roles and upload again. No fixed employees were added.",
+        errors: missingRoleRows,
+      });
+    }
+
+    for (const employee of normalizedEmployees) {
+      const roleName = designationRoles[employee.designation_name.toLowerCase().replace(/[^a-z]/g, "")];
+      const hashedPassword = await bcrypt.hash(employee.user_password, 12);
+      await connection.query(
+        `INSERT INTO employee_master (
+          emp_id, full_name, gender_id, date_of_birth, date_of_joining, status_id,
+          company, dept_id, emp_type_id, designation_id, branch, mobile, company_email,
+          current_address, permanent_address, esic_number, pf_number, approved_salary, created_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          employee.emp_id, employee.full_name, employee.gender_id, employee.date_of_birth,
+          employee.date_of_joining, employee.status_id, company, employee.dept_id,
+          employee.emp_type_id, employee.designation_id, employee.mobile, employee.company_email,
+          employee.current_address, employee.permanent_address, employee.esic_number,
+          employee.pf_number, employee.approved_salary, created_by,
+        ]
+      );
+      await connection.query(
+        "INSERT INTO users (user_name, user_email, user_password, role_id) VALUES (?, ?, ?, ?)",
+        [employee.company_email, employee.company_email, hashedPassword, roleIds.get(roleName)]
+      );
+    }
+
+    await connection.commit();
+    transactionStarted = false;
+    return res.status(201).json({
+      success: true,
+      message: `${normalizedEmployees.length} fixed employee record(s) imported successfully`,
+      data: { imported_count: normalizedEmployees.length },
+    });
+  } catch (error) {
+    if (connection && transactionStarted) await connection.rollback();
+    console.error("Error importing fixed employees:", error);
+    if (error.code === "ER_DUP_ENTRY") {
+      return res.status(400).json({
+        success: false,
+        message: "A duplicate employee ID or login email already exists. No fixed employees were added.",
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: "Failed to import fixed employees",
     });
   } finally {
     if (connection) connection.release();

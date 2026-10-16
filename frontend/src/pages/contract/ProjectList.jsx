@@ -16,6 +16,7 @@ import {
   Truck,
   HardHat,
   CalendarCheck,
+  Eye,
 } from "lucide-react";
 import ViewAssignedIncharges from "../../components/ViewAssignedIncharges";
 // import AssignSiteIncharge from "./AssignSiteIncharge";
@@ -64,6 +65,7 @@ const ProjectList = () => {
   const [showMaterialPlanning, setShowMaterialPlanning] = useState(false);
   const [showMaterialDispatch, setShowMaterialDispatch] = useState(false);
   const [isModalClosing, setIsModalClosing] = useState(false);
+  const [dailyDetails, setDailyDetails] = useState({ open: false, loading: false, days: [], error: "", title: "" });
   const dropdownRefCompany = useRef(null);
   const dropdownRefProject = useRef(null);
   const dropdownRefSite = useRef(null);
@@ -415,6 +417,42 @@ const ProjectList = () => {
       showAlert("error", error.response?.data?.message || "Failed to update data");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const openDailyDetails = async (record) => {
+    if (!selectedProject || !selectedSiteId || !record.desc_id) {
+      showAlert("error", "Select a project and site before opening daily details");
+      return;
+    }
+    setDailyDetails({
+      open: true,
+      loading: true,
+      days: [],
+      error: "",
+      title: `${record.item_id} · ${record.work_descriptions || record.subcategory_name || "Work item"}`,
+    });
+    try {
+      const response = await axios.get(`${API_BASE_URL}/admin/reckoner-daily-cost-details`, {
+        params: {
+          project_id: selectedProject,
+          site_id: selectedSiteId,
+          desc_id: record.desc_id,
+          rec_id: record.rec_id,
+        },
+      });
+      setDailyDetails(previous => ({
+        ...previous,
+        loading: false,
+        days: response.data.data || [],
+      }));
+    } catch (error) {
+      console.error("Failed to load daily work and cost details:", error);
+      setDailyDetails(previous => ({
+        ...previous,
+        loading: false,
+        error: error.response?.data?.message || "Unable to load daily details",
+      }));
     }
   };
 
@@ -900,6 +938,13 @@ const ProjectList = () => {
                           </div>
                         </div>
                         <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openDailyDetails(r)}
+                            className="inline-flex items-center gap-1 rounded-lg bg-sky-600 px-3 py-2 text-sm text-white hover:bg-sky-700"
+                          >
+                            <Eye className="h-4 w-4" /> Daily
+                          </button>
                           {editingId === r.rec_id ? (
                             <>
                               <button
@@ -962,6 +1007,11 @@ const ProjectList = () => {
                           <div>Qty: {balance.qty} {r.uom}</div>
                           <div>Value: {balance.value}</div>
                         </div>
+                        <div title="Costs are totaled for this work description and repeat for reckoner items with the same description.">
+                          <div className="font-medium text-gray-700">Work Description Costs</div>
+                          <div>Materials: ₹{Number(r.material_used_value || 0).toFixed(2)}</div>
+                          <div>Labour: ₹{Number(r.labour_cost || 0).toFixed(2)}</div>
+                        </div>
                         <div>
                           <div className="font-medium text-gray-700">Status</div>
                           <div className="space-y-2">
@@ -1001,6 +1051,9 @@ const ProjectList = () => {
                       <th className="px-4 py-3 text-center text-xs font-medium text-white uppercase tracking-wider" colSpan={2}>
                         Balance
                       </th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-white uppercase tracking-wider" colSpan={2}>
+                        Work Description Costs
+                      </th>
                       <th className="px-4 py-3 text-center text-xs font-medium text-white uppercase tracking-wider" rowSpan={2}>
                         Status
                       </th>
@@ -1016,6 +1069,8 @@ const ProjectList = () => {
                       <th className="px-2 py-2 text-center text-xs font-semibold text-white">Value</th>
                       <th className="px-2 py-2 text-center text-xs font-semibold text-white">Qty</th>
                       <th className="px-2 py-2 text-center text-xs font-semibold text-white">Value</th>
+                      <th className="px-2 py-2 text-center text-xs font-semibold text-white">Materials</th>
+                      <th className="px-2 py-2 text-center text-xs font-semibold text-white">Labour</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
@@ -1059,6 +1114,18 @@ const ProjectList = () => {
                           )}
                           <td className="px-2 py-4 text-center text-sm">{balance.qty} {r.uom}</td>
                           <td className="px-2 py-4 text-center text-sm">{balance.value}</td>
+                          <td
+                            className="px-2 py-4 text-center text-sm"
+                            title="Material usage value for this work description"
+                          >
+                            ₹{Number(r.material_used_value || 0).toFixed(2)}
+                          </td>
+                          <td
+                            className="px-2 py-4 text-center text-sm"
+                            title="Labour attendance cost for this work description"
+                          >
+                            ₹{Number(r.labour_cost || 0).toFixed(2)}
+                          </td>
                           <td className="px-4 py-4 text-center text-sm space-y-2">
                             {editingId === r.rec_id
                               ? renderStatusTag(editingData.work_status)
@@ -1088,12 +1155,21 @@ const ProjectList = () => {
                                 </button>
                               </div>
                             ) : (
-                              <button
-                                onClick={() => handleEdit(r)}
-                                className="inline-flex items-center px-3 py-1 text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700"
-                              >
-                                <Edit className="mr-1 h-4 w-4" /> Edit
-                              </button>
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => openDailyDetails(r)}
+                                  className="inline-flex items-center rounded-lg bg-sky-600 px-3 py-1 text-sm font-medium text-white hover:bg-sky-700"
+                                >
+                                  <Eye className="mr-1 h-4 w-4" /> Daily
+                                </button>
+                                <button
+                                  onClick={() => handleEdit(r)}
+                                  className="inline-flex items-center rounded-lg bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-700"
+                                >
+                                  <Edit className="mr-1 h-4 w-4" /> Edit
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -1106,6 +1182,94 @@ const ProjectList = () => {
           )}
         </div>
       </div>
+      {dailyDetails.open && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-3 sm:p-6"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setDailyDetails(previous => ({ ...previous, open: false }));
+          }}
+        >
+          <section className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-xl bg-white shadow-2xl">
+            <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b bg-white p-4 sm:p-5">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Daily Work & Cost Details</h2>
+                <p className="mt-1 text-sm text-gray-600">{dailyDetails.title}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDailyDetails(previous => ({ ...previous, open: false }))}
+                className="rounded-md p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+                aria-label="Close daily details"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </header>
+            <div className="space-y-4 p-4 sm:p-5">
+              {dailyDetails.loading ? (
+                <div className="py-10 text-center text-gray-500">Loading daily breakdown...</div>
+              ) : dailyDetails.error ? (
+                <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{dailyDetails.error}</div>
+              ) : dailyDetails.days.length === 0 ? (
+                <div className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">No daily completion, material usage, or labour attendance has been recorded for this work item.</div>
+              ) : dailyDetails.days.map(day => (
+                <article key={day.entry_date} className="overflow-hidden rounded-lg border border-gray-200">
+                  <div className="flex flex-wrap items-center justify-between gap-3 bg-gray-50 p-4">
+                    <h3 className="font-semibold text-gray-900">{new Date(`${day.entry_date}T00:00:00`).toLocaleDateString()}</h3>
+                    <div className="flex flex-wrap gap-2 text-xs font-medium">
+                      <span className="rounded-full bg-green-100 px-3 py-1 text-green-800">Work ₹{Number(day.completion_value).toFixed(2)}</span>
+                      <span className="rounded-full bg-indigo-100 px-3 py-1 text-indigo-800">Materials ₹{Number(day.material_value).toFixed(2)}</span>
+                      <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-800">Labour ₹{Number(day.labour_cost).toFixed(2)}</span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-3">
+                    <div>
+                      <h4 className="mb-2 text-sm font-semibold text-green-800">Work completed</h4>
+                      {day.completions.length === 0 ? <p className="text-sm text-gray-500">No work entry</p> : (
+                        <div className="space-y-2">
+                          {day.completions.map(entry => (
+                            <div key={entry.entry_id} className="rounded-md bg-green-50 p-3 text-sm">
+                              <div className="font-medium">{Number(entry.area_added).toFixed(2)} area × ₹{Number(entry.rate).toFixed(2)} = ₹{Number(entry.value_added).toFixed(2)}</div>
+                              {entry.remarks && <p className="mt-1 text-gray-600">{entry.remarks}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <h4 className="mb-2 text-sm font-semibold text-indigo-800">Materials used</h4>
+                      {day.materials.length === 0 ? <p className="text-sm text-gray-500">No material usage</p> : (
+                        <div className="space-y-2">
+                          {day.materials.map(entry => (
+                            <div key={entry.entry_id} className="rounded-md bg-indigo-50 p-3 text-sm">
+                              <div className="font-medium">{entry.item_name} ({entry.item_id})</div>
+                              <div className="text-gray-700">{Number(entry.quantity).toFixed(2)} {entry.uom_name || ""} × ₹{Number(entry.unit_rate).toFixed(2)} = ₹{Number(entry.material_value).toFixed(2)}</div>
+                              {entry.remarks && <p className="mt-1 text-gray-600">{entry.remarks}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <h4 className="mb-2 text-sm font-semibold text-amber-800">Labour cost</h4>
+                      {day.labour.length === 0 ? <p className="text-sm text-gray-500">No labour attendance</p> : (
+                        <div className="space-y-2">
+                          {day.labour.map(entry => (
+                            <div key={entry.attendance_id} className="rounded-md bg-amber-50 p-3 text-sm">
+                              <div className="font-medium">{entry.full_name}</div>
+                              <div className="text-gray-700">{Number(entry.shifts).toFixed(1)} shifts × ₹{Number(entry.shift_rate).toFixed(2)} = ₹{Number(entry.labour_cost).toFixed(2)}</div>
+                              {entry.remarks && <p className="mt-1 text-gray-600">{entry.remarks}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
     </>
   );
 };

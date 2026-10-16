@@ -201,7 +201,10 @@ const LabourAssign = () => {
         project_id: selectedProject.value,
         site_id: selectedSite.value,
         desc_id: selectedWorkDesc.value,
-        labour_ids: selectedLabours.map(labour => labour.value),
+        labour_assignments: selectedLabours.map(labour => ({
+          labour_id: labour.value,
+          shift_cost: labour.shift_cost,
+        })),
         from_date: fromDate,
         to_date: toDate,
         created_by: parseInt(user_id),
@@ -319,6 +322,7 @@ const LabourAssign = () => {
   const labourOptions = labours.map(labour => ({
     value: labour.id,
     label: `${labour.id} - ${labour.full_name}`,
+    approved_salary: labour.approved_salary,
   }));
 
   const formatDateForDisplay = (dateString) => {
@@ -327,22 +331,25 @@ const LabourAssign = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4 flex flex-col items-center">
-      <div className="w-full max-w-md">
-        <div className="flex justify-between items-center mb-4">
-          <h1 className="text-xl font-bold text-gray-900">Labour Assignment</h1>
+    <div className="min-h-screen bg-slate-50 p-4 sm:p-6">
+      <div className="mx-auto w-full max-w-5xl">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Labour Assignment</h1>
+            <p className="mt-1 text-sm text-gray-600">Assign labour to a project, site, and work item with a cost per shift.</p>
+          </div>
           <button
             onClick={handleViewAssignedLabours}
             disabled={!selectedCompany || !selectedProject || !selectedSite || !selectedWorkDesc || loading}
-            className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm flex items-center disabled:bg-gray-400 disabled:cursor-not-allowed"
+            className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-400"
           >
             <Eye size={16} className="mr-1" />
             View Assigned
           </button>
         </div>
 
-        <div className="mb-4 space-y-4">
-          <div>
+        <div className="mb-5 grid grid-cols-1 gap-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:grid-cols-2">
+          <div className="min-w-0">
             <label className="block text-sm font-medium text-gray-700 mb-1">Select Company</label>
             <Select
               options={companyOptions}
@@ -354,7 +361,7 @@ const LabourAssign = () => {
               classNamePrefix="react-select"
             />
           </div>
-          <div>
+          <div className="min-w-0">
             <label className="block text-sm font-medium text-gray-700 mb-1">Select Project</label>
             <Select
               options={projectOptions}
@@ -367,7 +374,7 @@ const LabourAssign = () => {
               classNamePrefix="react-select"
             />
           </div>
-          <div>
+          <div className="min-w-0">
             <label className="block text-sm font-medium text-gray-700 mb-1">Select Site</label>
             <Select
               options={siteOptions}
@@ -380,7 +387,7 @@ const LabourAssign = () => {
               classNamePrefix="react-select"
             />
           </div>
-          <div>
+          <div className="min-w-0">
             <label className="block text-sm font-medium text-gray-700 mb-1">Select Work Description</label>
             <Select
               options={workDescOptions}
@@ -393,12 +400,16 @@ const LabourAssign = () => {
               classNamePrefix="react-select"
             />
           </div>
-          <div>
+          <div className="min-w-0 sm:col-span-2">
             <label className="block text-sm font-medium text-gray-700 mb-1">Select Labours</label>
             <Select
               options={labourOptions}
               value={selectedLabours}
-              onChange={setSelectedLabours}
+              onChange={(options) => setSelectedLabours((options || []).map((option) => ({
+                ...option,
+                shift_cost: selectedLabours.find((selected) => selected.value === option.value)?.shift_cost
+                  ?? String(option.approved_salary || ""),
+              })))}
               placeholder="Search Labours..."
               isSearchable
               isMulti
@@ -407,6 +418,38 @@ const LabourAssign = () => {
               classNamePrefix="react-select"
             />
           </div>
+          {selectedLabours.length > 0 && (
+            <div className="sm:col-span-2">
+              <h2 className="mb-2 text-sm font-semibold text-gray-800">Shift cost for selected labour</h2>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {selectedLabours.map((labour) => (
+                  <label key={labour.value} className="flex items-center justify-between gap-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium text-gray-800">{labour.label}</span>
+                      <span className="text-xs text-gray-500">Cost for one shift</span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <span className="text-sm text-gray-500">₹</span>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={labour.shift_cost}
+                        onChange={(event) => setSelectedLabours((previous) => previous.map((selected) =>
+                          selected.value === labour.value
+                            ? { ...selected, shift_cost: event.target.value }
+                            : selected
+                        ))}
+                        placeholder="Per-shift cost"
+                        className="w-32 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+                        required
+                      />
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">From Date</label>
             <input
@@ -432,11 +475,11 @@ const LabourAssign = () => {
 
         <button
           onClick={handleSaveAssignment}
-          className="w-full p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 flex items-center justify-center"
-          disabled={submitting || selectedLabours.length === 0}
+          className="flex w-full items-center justify-center rounded-lg bg-green-600 p-3 font-medium text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-gray-400"
+          disabled={submitting || selectedLabours.length === 0 || selectedLabours.some(labour => !Number(labour.shift_cost) || Number(labour.shift_cost) <= 0)}
         >
-          <Save size={14} className="mr-2" />
-          Save Labour Assignment
+          <Save size={16} className="mr-2" />
+          {submitting ? "Saving assignment..." : "Save Labour Assignment"}
         </button>
       </div>
 
@@ -494,13 +537,13 @@ const LabourAssign = () => {
                           />
                         </div>
                         <div>
-                          <label className="text-sm font-medium">Salary</label>
+                          <label className="text-sm font-medium">Shift Cost (₹ per shift)</label>
                           <input
                             type="number"
                             step="0.01"
                             value={editSalary}
                             onChange={(e) => setEditSalary(e.target.value)}
-                            placeholder="Enter salary"
+                            placeholder="Enter shift cost"
                             className="w-full p-1 border rounded text-sm"
                           />
                         </div>
@@ -528,7 +571,7 @@ const LabourAssign = () => {
                       </div>
                     ) : (
                       <div className="text-sm text-gray-600">
-                        From: {formatDateForDisplay(assignment.from_date)} | To: {formatDateForDisplay(assignment.to_date)} | Salary: {assignment.salary || 'N/A'}
+                        From: {formatDateForDisplay(assignment.from_date)} | To: {formatDateForDisplay(assignment.to_date)} | Shift cost: ₹{assignment.salary || 'N/A'}
                       </div>
                     )}
                   </div>

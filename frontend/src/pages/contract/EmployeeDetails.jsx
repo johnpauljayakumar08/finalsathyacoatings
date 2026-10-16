@@ -26,6 +26,26 @@ const LABOUR_IMPORT_COLUMNS = [
   { header: "PF Number (Optional)", key: "pf_number" },
 ];
 
+const EMPLOYEE_IMPORT_COLUMNS = [
+  { header: "Employee ID", key: "emp_id" },
+  { header: "Full Name", key: "full_name" },
+  { header: "Date of Birth (YYYY-MM-DD)", key: "date_of_birth" },
+  { header: "Date of Joining (YYYY-MM-DD)", key: "date_of_joining" },
+  { header: "Gender", key: "gender" },
+  { header: "Department (Default: Engineering)", key: "department" },
+  { header: "Employment Type (Default: Full-Time)", key: "employment_type" },
+  { header: "Designation (Default: Site Engineer)", key: "designation" },
+  { header: "Status", key: "status" },
+  { header: "Mobile", key: "mobile" },
+  { header: "Company Email", key: "company_email" },
+  { header: "Password", key: "user_password" },
+  { header: "Current Address", key: "current_address" },
+  { header: "Permanent Address", key: "permanent_address" },
+  { header: "Approved Salary", key: "approved_salary" },
+  { header: "ESIC Number (Optional)", key: "esic_number" },
+  { header: "PF Number (Optional)", key: "pf_number" },
+];
+
 
 const EmployeeDetails = () => {
   const { encodedUserId } = useParams();
@@ -99,15 +119,70 @@ const EmployeeDetails = () => {
       };
       sampleSheet.views = [{ state: "frozen", ySplit: 1 }];
 
+      const employeeSheet = workbook.addWorksheet("Fixed Employee Upload");
+      employeeSheet.addRow(EMPLOYEE_IMPORT_COLUMNS.map((column) => column.header));
+      employeeSheet.columns = EMPLOYEE_IMPORT_COLUMNS.map(({ key }) => ({
+        width: ["current_address", "permanent_address"].includes(key) ? 32 : 26,
+      }));
+      employeeSheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+      employeeSheet.getRow(1).fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF38761D" },
+      };
+      employeeSheet.views = [{ state: "frozen", ySplit: 1 }];
+      employeeSheet.getColumn(1).numFmt = "@";
+      employeeSheet.getColumn(10).numFmt = "@";
+      employeeSheet.getColumn(12).numFmt = "@";
+
+      const employeeSampleSheet = workbook.addWorksheet("Fixed Employee Sample");
+      employeeSampleSheet.addRow(EMPLOYEE_IMPORT_COLUMNS.map((column) => column.header));
+      employeeSampleSheet.addRow([
+        "EMP-DEMO-001",
+        "Example Site Engineer",
+        "1990-01-01",
+        "2026-10-01",
+        "Male",
+        "Engineering",
+        "Full-Time",
+        "Site Engineer",
+        "Active",
+        "9000000002",
+        "engineer@example.invalid",
+        "ChangeMe123!",
+        "Example current address",
+        "Example permanent address",
+        "25000.00",
+        "",
+        "",
+      ]);
+      employeeSampleSheet.columns = EMPLOYEE_IMPORT_COLUMNS.map(({ key }) => ({
+        width: ["current_address", "permanent_address"].includes(key) ? 32 : 26,
+      }));
+      employeeSampleSheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+      employeeSampleSheet.getRow(1).fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF38761D" },
+      };
+      employeeSampleSheet.views = [{ state: "frozen", ySplit: 1 }];
+      employeeSampleSheet.getColumn(1).numFmt = "@";
+      employeeSampleSheet.getColumn(10).numFmt = "@";
+      employeeSampleSheet.getColumn(12).numFmt = "@";
+
       const instructionsSheet = workbook.addWorksheet("Instructions");
       instructionsSheet.addRows([
-        ["Labor Excel Upload Instructions"],
-        ["Enter records only in the Labor Upload sheet. The Sample Data sheet contains a fictitious example."],
+        ["Employee and Labor Excel Upload Instructions"],
+        ["Enter records in either the Labor Upload sheet or the Fixed Employee Upload sheet. Upload one populated sheet at a time."],
+        ["The Sample Data and Fixed Employee Sample sheets contain fictitious examples. Do not import the sample rows."],
         ["Dates must be real dates or text in YYYY-MM-DD format."],
         ["Gender, Employment Type, Designation, and Status must match values configured in the application."],
         ["Site Engineer Employee ID must belong to an employee with the Site Engineer designation."],
         ["Enter Mobile and Aadhaar Number as text to preserve all digits."],
+        ["Salary accepts whole numbers (for example, 25000) or up to 2 decimal places (for example, 25000.50). Comma-separated thousands are also accepted."],
         ["Company is automatically set to Sathya Coatings. ESIC and PF numbers are optional."],
+        ["For Fixed Employee Upload, Department defaults to Engineering, Employment Type to Full-Time, and Designation to Site Engineer when left blank."],
+        ["Fixed employees need a unique Employee ID, Company Email, and a password of at least 8 characters."],
         ["Import is all-or-nothing: if any row is invalid, no rows are saved."],
       ]);
       instructionsSheet.getColumn(1).width = 115;
@@ -119,20 +194,23 @@ const EmployeeDetails = () => {
       }));
       const link = document.createElement("a");
       link.href = fileUrl;
-      link.download = "labor_upload_template.xlsx";
+      link.download = "employee_and_labor_upload_template.xlsx";
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(fileUrl), 1000);
     } catch (downloadError) {
       await Swal.fire({
         icon: "error",
-        title: "Unable to create the labor template",
+        title: "Unable to create the employee and labor template",
         text: downloadError.message || "Please try again.",
       });
     }
   };
 
   const getImportCellValue = (cell, key) => {
-    const value = cell.value;
+    const rawValue = cell.value;
+    const value = rawValue && typeof rawValue === "object" && "result" in rawValue
+      ? rawValue.result
+      : rawValue;
     if (value instanceof Date) {
       const year = value.getFullYear();
       const month = String(value.getMonth() + 1).padStart(2, "0");
@@ -177,52 +255,66 @@ const EmployeeDetails = () => {
       const ExcelJS = (await import("exceljs")).default;
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(await file.arrayBuffer());
-      const worksheet = workbook.getWorksheet("Labor Upload");
-      if (!worksheet || worksheet.rowCount < 2) {
-        throw new Error("The workbook must contain a Labor Upload sheet with at least one data row.");
-      }
-
-      const headers = new Map();
-      worksheet.getRow(1).eachCell((cell, columnNumber) => {
-        headers.set(String(cell.text || "").trim().toLowerCase(), columnNumber);
-      });
-      const optionalColumns = new Set(["esic_number", "pf_number"]);
-      const missingHeaders = LABOUR_IMPORT_COLUMNS
-        .filter(({ key }) => !optionalColumns.has(key))
-        .filter(({ header }) => !headers.has(header.toLowerCase()))
-        .map(({ header }) => header);
-      if (missingHeaders.length) {
-        throw new Error(`Template columns are missing: ${missingHeaders.join(", ")}`);
-      }
-
-      const labours = [];
-      worksheet.eachRow((row, rowNumber) => {
-        if (rowNumber === 1) return;
-        const values = {};
-        LABOUR_IMPORT_COLUMNS.forEach(({ header, key }) => {
-          const columnNumber = headers.get(header.toLowerCase());
-          values[key] = columnNumber ? getImportCellValue(row.getCell(columnNumber), key) : "";
+      const readRows = (worksheet, columns, optionalKeys = new Set()) => {
+        if (!worksheet || worksheet.rowCount < 2) return [];
+        const headers = new Map();
+        worksheet.getRow(1).eachCell((cell, columnNumber) => {
+          headers.set(String(cell.text || "").trim().toLowerCase(), columnNumber);
         });
-        values._spreadsheet_row = rowNumber;
-        if (Object.entries(values).some(([key, value]) => key !== "_spreadsheet_row" && value !== "")) {
-          labours.push(values);
+        const missingHeaders = columns
+          .filter(({ key }) => !optionalKeys.has(key))
+          .filter(({ header }) => !headers.has(header.toLowerCase()))
+          .map(({ header }) => header);
+        if (missingHeaders.length) {
+          throw new Error(`Template columns are missing from "${worksheet.name}": ${missingHeaders.join(", ")}`);
         }
-      });
-      if (labours.length === 0) {
-        throw new Error("Enter at least one labor record in the Labor Upload sheet.");
+        const records = [];
+        worksheet.eachRow((row, rowNumber) => {
+          if (rowNumber === 1) return;
+          const values = {};
+          columns.forEach(({ header, key }) => {
+            const columnNumber = headers.get(header.toLowerCase());
+            values[key] = columnNumber ? getImportCellValue(row.getCell(columnNumber), key) : "";
+          });
+          values._spreadsheet_row = rowNumber;
+          if (Object.entries(values).some(([key, value]) => key !== "_spreadsheet_row" && value !== "")) {
+            records.push(values);
+          }
+        });
+        return records;
+      };
+
+      const employees = readRows(
+        workbook.getWorksheet("Fixed Employee Upload"),
+        EMPLOYEE_IMPORT_COLUMNS,
+        new Set(["esic_number", "pf_number", "department", "employment_type", "designation"])
+      );
+      const labours = readRows(
+        workbook.getWorksheet("Labor Upload"),
+        LABOUR_IMPORT_COLUMNS,
+        new Set(["esic_number", "pf_number"])
+      );
+      if (employees.length > 0 && labours.length > 0) {
+        throw new Error("Upload either Fixed Employee Upload or Labor Upload records at one time, not both.");
       }
-      if (labours.length > 500) {
-        throw new Error("A maximum of 500 labor records can be imported at once.");
+      const importingEmployees = employees.length > 0;
+      const records = importingEmployees ? employees : labours;
+      const sheetName = importingEmployees ? "Fixed Employee Upload" : "Labor Upload";
+      if (records.length === 0) {
+        throw new Error(`Enter at least one record in the ${sheetName} sheet.`);
+      }
+      if (records.length > 500) {
+        throw new Error("A maximum of 500 records can be imported at once.");
       }
 
-      const response = await axios.post(`${API_BASE_URL}/admin/import-labours`, {
-        labours,
-        created_by: userId,
-      });
+      const response = await axios.post(
+        `${API_BASE_URL}/admin/${importingEmployees ? "import-employees" : "import-labours"}`,
+        importingEmployees ? { employees: records, created_by: userId } : { labours: records, created_by: userId }
+      );
       await Promise.all([fetchEmployees(), fetchFilterOptions()]);
       await Swal.fire({
         icon: "success",
-        title: "Labor import completed",
+        title: importingEmployees ? "Fixed employee import completed" : "Labor import completed",
         text: response.data.message,
       });
     } catch (uploadError) {
@@ -232,7 +324,7 @@ const EmployeeDetails = () => {
         : "";
       await Swal.fire({
         icon: "error",
-        title: "Labor import failed",
+        title: "Employee/labor import failed",
         text: rowErrorText || uploadError.response?.data?.message || uploadError.message || "Could not read the Excel file.",
       });
     } finally {
@@ -482,7 +574,7 @@ const EmployeeDetails = () => {
               className="inline-flex items-center px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
             >
               <Download className="h-4 w-4 mr-2" />
-              Labor Template
+              Employee & Labor Template
             </button>
             <input
               ref={labourFileInputRef}
@@ -500,7 +592,7 @@ const EmployeeDetails = () => {
               {isUploadingLabours
                 ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 : <Upload className="h-4 w-4 mr-2" />}
-              {isUploadingLabours ? "Uploading..." : "Upload Labor Excel"}
+              {isUploadingLabours ? "Uploading..." : "Upload Employee/Labor Excel"}
             </button>
             <div className="relative" ref={menuRef}>
               <button

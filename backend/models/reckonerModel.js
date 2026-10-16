@@ -453,7 +453,26 @@ exports.getAllReckonerWithStatus = async () => {
               wc.billing_status,
               wc.created_by,
               wc.updated_at,
-              u.user_name AS created_by_name
+              u.user_name AS created_by_name,
+              (
+                  SELECT COALESCE(SUM(COALESCE(muh.overall_qty, 0) * COALESCE(ma.rate, 0)), 0)
+                  FROM material_usage_history muh
+                  JOIN material_acknowledgement mack ON mack.id = muh.material_ack_id
+                  JOIN material_dispatch md ON md.id = mack.material_dispatch_id
+                  JOIN material_assign ma ON ma.id = md.material_assign_id
+                  WHERE ma.pd_id = sd.pd_id
+                    AND ma.site_id = pr.site_id
+                    AND ma.desc_id = pr.desc_id
+              ) AS material_used_value,
+              (
+                  SELECT COALESCE(SUM(COALESCE(lat.shift, 0) * COALESCE(NULLIF(la.salary, 0), l.approved_salary, 0)), 0)
+                  FROM labour_attendance lat
+                  JOIN labour_assignment la ON la.id = lat.labour_assignment_id
+                  JOIN labour l ON l.id = la.labour_id
+                  WHERE la.project_id = sd.pd_id
+                    AND la.site_id = pr.site_id
+                    AND la.desc_id = pr.desc_id
+              ) AS labour_cost
           FROM 
               po_reckoner pr
           LEFT JOIN 

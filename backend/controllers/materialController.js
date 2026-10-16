@@ -1723,21 +1723,49 @@ exports.getNextDcNo = async function (req, res) {
 
 
 exports.addMaterialDispatch = async (req, res) => {
-  const connection = await db.getConnection();
-  try {
-    await connection.beginTransaction();
-
-    const { assignments, transport, created_by } = req.body;
-
-    if (!created_by) {
+  let connection;
+  let transactionStarted = false;
+  const rollbackTransaction = async () => {
+    if (connection && transactionStarted) {
       await connection.rollback();
+      transactionStarted = false;
+    }
+  };
+
+  try {
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'A dispatch request object is required',
+      });
+    }
+
+    const { assignments, transport, created_by } = body;
+    if (!Array.isArray(assignments) || assignments.length === 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'At least one dispatch assignment is required',
+      });
+    }
+    if (assignments.some((assignment) => !assignment || typeof assignment !== 'object' || Array.isArray(assignment))) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Each dispatch assignment must be an object',
+      });
+    }
+    if (!created_by) {
       return res.status(400).json({
         status: "error",
         message: "Created By is required",
       });
     }
 
-    // Validate dispatch assignments (if provided)
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
+
+    // Validate dispatch assignments
     let dispatchInsertedIds = [];
     if (assignments && Array.isArray(assignments) && assignments.length > 0) {
       const validationErrors = [];
@@ -1745,8 +1773,9 @@ exports.addMaterialDispatch = async (req, res) => {
       for (const assignment of assignments) {
         const { material_assign_id, dc_no, dispatch_date, order_no, vendor_code, dispatch_qty, comp_a_qty, comp_b_qty, comp_c_qty, comp_a_remarks, comp_b_remarks, comp_c_remarks } = assignment;
 
-        if (!material_assign_id || isNaN(material_assign_id)) {
+        if (!material_assign_id || !Number.isFinite(Number(material_assign_id)) || Number(material_assign_id) <= 0) {
           validationErrors.push(`Assignment for material_assign_id ${material_assign_id}: material_assign_id is required and must be a number`);
+          continue;
         }
         if (!dc_no || isNaN(dc_no)) {
           validationErrors.push(`Assignment for material_assign_id ${material_assign_id}: dc_no is required and must be a number`);
@@ -1816,7 +1845,7 @@ exports.addMaterialDispatch = async (req, res) => {
       }
 
       if (validationErrors.length > 0) {
-        await connection.rollback();
+        await rollbackTransaction();
         return res.status(400).json({
           status: 'error',
           message: 'Validation errors in dispatch assignments',
@@ -1825,7 +1854,7 @@ exports.addMaterialDispatch = async (req, res) => {
       }
 
       if (conflicts.length > 0) {
-        await connection.rollback();
+        await rollbackTransaction();
         return res.status(400).json({
           status: 'already_dispatched',
           message: 'Some materials would exceed the assigned quantity if dispatched',
@@ -1883,7 +1912,7 @@ exports.addMaterialDispatch = async (req, res) => {
       }
 
       if (transportValidationErrors.length > 0) {
-        await connection.rollback();
+        await rollbackTransaction();
         return res.status(400).json({
           status: 'error',
           message: 'Validation errors in transport details',
@@ -1906,7 +1935,7 @@ exports.addMaterialDispatch = async (req, res) => {
       } else {
         const [providerExists] = await connection.query('SELECT id FROM provider_master WHERE id = ?', [provider_id]);
         if (!providerExists.length) {
-          await connection.rollback();
+          await rollbackTransaction();
           return res.status(400).json({
             status: 'error',
             message: 'Invalid provider_id: Provider does not exist',
@@ -1929,7 +1958,7 @@ exports.addMaterialDispatch = async (req, res) => {
       } else {
         const [vehicleExists] = await connection.query('SELECT id FROM vehicle_master WHERE id = ?', [vehicle_id]);
         if (!vehicleExists.length) {
-          await connection.rollback();
+          await rollbackTransaction();
           return res.status(400).json({
             status: 'error',
             message: 'Invalid vehicle_id: Vehicle does not exist',
@@ -1952,7 +1981,7 @@ exports.addMaterialDispatch = async (req, res) => {
       } else {
         const [driverExists] = await connection.query('SELECT id FROM driver_master WHERE id = ?', [driver_id]);
         if (!driverExists.length) {
-          await connection.rollback();
+          await rollbackTransaction();
           return res.status(400).json({
             status: 'error',
             message: 'Invalid driver_id: Driver does not exist',
@@ -1971,6 +2000,7 @@ exports.addMaterialDispatch = async (req, res) => {
     }
 
     await connection.commit();
+    transactionStarted = false;
     res.status(201).json({
       status: 'success',
       message: 'Materials dispatched and transport details saved successfully',
@@ -1980,7 +2010,7 @@ exports.addMaterialDispatch = async (req, res) => {
       },
     });
   } catch (error) {
-    await connection.rollback();
+    await rollbackTransaction();
     console.error('Add dispatch error:', error);
     if (error.code === 'ER_NO_REFERENCED_ROW_2') {
       return res.status(400).json({
@@ -1995,7 +2025,7 @@ exports.addMaterialDispatch = async (req, res) => {
       sqlMessage: error.sqlMessage || 'No SQL message available',
     });
   } finally {
-    connection.release();
+    if (connection) connection.release();
   }
 };
 

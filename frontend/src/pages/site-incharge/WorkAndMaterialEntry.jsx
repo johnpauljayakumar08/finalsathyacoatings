@@ -2,7 +2,7 @@ import { API_BASE_URL } from "../../config/api.js";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import Select from "react-select";
-import { FileText, Save } from "lucide-react";
+import { FileText, Save, HardHat } from "lucide-react";
 import { ToastContainer, toast } from "react-toastify";
 import { useParams } from "react-router-dom";
 
@@ -27,9 +27,17 @@ const WorkAndMaterialEntry = () => {
   const [usageData, setUsageData] = useState({});
   const [usageInputs, setUsageInputs] = useState({});
   const [selectedMaterials, setSelectedMaterials] = useState(new Set());
+  const [assignedLabours, setAssignedLabours] = useState([]);
+  const [labourShiftInputs, setLabourShiftInputs] = useState({});
+  const [labourRemarksInputs, setLabourRemarksInputs] = useState({});
+  const [budgetHeads, setBudgetHeads] = useState([]);
+  const [budgetExpenseData, setBudgetExpenseData] = useState({});
+  const [budgetExpenseInputs, setBudgetExpenseInputs] = useState({});
   const [loading, setLoading] = useState(false);
   const [savingWork, setSavingWork] = useState(false);
   const [savingMaterials, setSavingMaterials] = useState(false);
+  const [savingLabour, setSavingLabour] = useState(false);
+  const [savingBudgetExpense, setSavingBudgetExpense] = useState(false);
 
   useEffect(() => {
     try {
@@ -88,6 +96,12 @@ const WorkAndMaterialEntry = () => {
     setUsageData({});
     setUsageInputs({});
     setSelectedMaterials(new Set());
+    setAssignedLabours([]);
+    setLabourShiftInputs({});
+    setLabourRemarksInputs({});
+    setBudgetHeads([]);
+    setBudgetExpenseData({});
+    setBudgetExpenseInputs({});
   }, [selectedCompany]);
 
   useEffect(() => {
@@ -100,6 +114,12 @@ const WorkAndMaterialEntry = () => {
     setUsageData({});
     setUsageInputs({});
     setSelectedMaterials(new Set());
+    setAssignedLabours([]);
+    setLabourShiftInputs({});
+    setLabourRemarksInputs({});
+    setBudgetHeads([]);
+    setBudgetExpenseData({});
+    setBudgetExpenseInputs({});
   }, [selectedProject]);
 
   useEffect(() => {
@@ -112,6 +132,12 @@ const WorkAndMaterialEntry = () => {
       setUsageData({});
       setUsageInputs({});
       setSelectedMaterials(new Set());
+      setAssignedLabours([]);
+      setLabourShiftInputs({});
+      setLabourRemarksInputs({});
+      setBudgetHeads([]);
+      setBudgetExpenseData({});
+      setBudgetExpenseInputs({});
       return;
     }
     const loadWorkDescriptions = async () => {
@@ -134,6 +160,12 @@ const WorkAndMaterialEntry = () => {
     setUsageData({});
     setUsageInputs({});
     setSelectedMaterials(new Set());
+    setAssignedLabours([]);
+    setLabourShiftInputs({});
+    setLabourRemarksInputs({});
+    setBudgetHeads([]);
+    setBudgetExpenseData({});
+    setBudgetExpenseInputs({});
   }, [selectedSite]);
 
   const loadCompletionHistory = useCallback(async (records) => {
@@ -153,6 +185,8 @@ const WorkAndMaterialEntry = () => {
       setDispatches([]);
       setUsageData({});
       setSelectedMaterials(new Set());
+      setBudgetHeads([]);
+      setBudgetExpenseData({});
       return;
     }
 
@@ -163,8 +197,12 @@ const WorkAndMaterialEntry = () => {
       setUsageData({});
       setUsageInputs({});
       setSelectedMaterials(new Set());
+      setAssignedLabours([]);
+      setBudgetHeads([]);
+      setBudgetExpenseData({});
+      setBudgetExpenseInputs({});
       try {
-        const [reckonerResponse, dispatchResponse] = await Promise.all([
+        const [reckonerResponse, dispatchResponse, attendanceResponse, budgetResponse] = await Promise.all([
           axios.get(`${API}/reckoner/reckoner/`),
           axios.get(`${API}/material/dispatch-details`, {
             params: {
@@ -172,6 +210,17 @@ const WorkAndMaterialEntry = () => {
               site_id: selectedSite.value,
               desc_id: selectedWorkDescription.value
             }
+          }),
+          axios.get(`${API}/site-incharge/labour-attendance`, {
+            params: {
+              project_id: selectedProject.value,
+              site_id: selectedSite.value,
+              desc_id: selectedWorkDescription.value,
+              entry_date: selectedDate
+            }
+          }),
+          axios.get(`${API}/site-incharge/budget-details`, {
+            params: { site_id: selectedSite.value }
           })
         ]);
 
@@ -190,12 +239,27 @@ const WorkAndMaterialEntry = () => {
         const uniqueDispatches = Array.from(new Map(
           (dispatchResponse.data.data || []).map(dispatch => [dispatch.id, dispatch])
         ).values());
+        const dailyBudgetHeads = (budgetResponse.data.data || []).filter(budget =>
+          String(budget.desc_id) === String(selectedWorkDescription.value) &&
+          ![1, 2].includes(Number(budget.overhead_id))
+        );
 
         if (cancelled) return;
         setWorkRecords(records);
         setDispatches(uniqueDispatches);
+        setBudgetHeads(dailyBudgetHeads);
+        const dailyLabours = attendanceResponse.data.data || [];
+        setAssignedLabours(dailyLabours);
+        setLabourShiftInputs(Object.fromEntries(dailyLabours.map(labour => [
+          labour.assignment_id,
+          labour.shift === null || labour.shift === undefined ? "" : String(labour.shift)
+        ])));
+        setLabourRemarksInputs(Object.fromEntries(dailyLabours.map(labour => [
+          labour.assignment_id,
+          labour.remarks || ""
+        ])));
 
-        const [historyResult, acknowledgementResults] = await Promise.all([
+        const [historyResult, acknowledgementResults, budgetExpenseResults] = await Promise.all([
           Promise.all(records.map(async record => {
             const response = await axios.get(`${API}/site-incharge/completion-entries`, {
               params: { rec_id: record.rec_id, date: selectedDate }
@@ -208,10 +272,17 @@ const WorkAndMaterialEntry = () => {
             });
             const row = response.data.data?.[0];
             return [dispatch.id, row?.acknowledgement || null];
+          })),
+          Promise.all(dailyBudgetHeads.map(async budget => {
+            const response = await axios.get(`${API}/site-incharge/budget-expense-details`, {
+              params: { actual_budget_id: budget.id, date: selectedDate }
+            });
+            return [budget.id, response.data.data];
           }))
         ]);
         if (cancelled) return;
         setCompletionData(Object.fromEntries(historyResult));
+        setBudgetExpenseData(Object.fromEntries(budgetExpenseResults));
         const acknowledgements = Object.fromEntries(acknowledgementResults);
 
         const usageResults = await Promise.all(uniqueDispatches.map(async dispatch => {
@@ -232,6 +303,9 @@ const WorkAndMaterialEntry = () => {
           toast.error(error.response?.data?.message || "Failed to load work and material details");
           setWorkRecords([]);
           setDispatches([]);
+          setAssignedLabours([]);
+          setBudgetHeads([]);
+          setBudgetExpenseData({});
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -289,6 +363,65 @@ const WorkAndMaterialEntry = () => {
       toast.error(error.response?.data?.message || "Failed to save work completion");
     } finally {
       setSavingWork(false);
+    }
+  };
+
+  const saveLabourAttendance = async () => {
+    const attendanceData = assignedLabours.flatMap(labour => {
+      const rawShift = labourShiftInputs[labour.assignment_id];
+      if (rawShift === "" || rawShift === undefined || rawShift === null) return [];
+      const shift = Number(rawShift);
+      if (!Number.isFinite(shift) || shift <= 0 || Math.round(shift * 10) !== shift * 10) return [];
+      const remarks = labourRemarksInputs[labour.assignment_id]?.trim() || "";
+      if (labour.attendance_id && (
+        Number(labour.shift) === shift &&
+        (labour.remarks || "") === remarks
+      )) return [];
+      if (labour.attendance_id && !labour.is_editable) return [];
+      return [{
+        labour_assignment_id: labour.assignment_id,
+        entry_date: selectedDate,
+        shift,
+        remarks: remarks || null,
+        attendance_id: labour.attendance_id || undefined
+      }];
+    });
+
+    if (attendanceData.length === 0) {
+      toast.error("Enter or change a valid positive shift (for example, 1 or 1.5) for an assigned labour");
+      return;
+    }
+
+    setSavingLabour(true);
+    try {
+      await axios.post(`${API}/site-incharge/save-labour-attendance`, {
+        attendance_data: attendanceData,
+        created_by: Number(userId)
+      });
+      toast.success("Daily labour shifts saved");
+      const response = await axios.get(`${API}/site-incharge/labour-attendance`, {
+        params: {
+          project_id: selectedProject.value,
+          site_id: selectedSite.value,
+          desc_id: selectedWorkDescription.value,
+          entry_date: selectedDate
+        }
+      });
+      const dailyLabours = response.data.data || [];
+      setAssignedLabours(dailyLabours);
+      setLabourShiftInputs(Object.fromEntries(dailyLabours.map(labour => [
+        labour.assignment_id,
+        labour.shift === null || labour.shift === undefined ? "" : String(labour.shift)
+      ])));
+      setLabourRemarksInputs(Object.fromEntries(dailyLabours.map(labour => [
+        labour.assignment_id,
+        labour.remarks || ""
+      ])));
+    } catch (error) {
+      console.error("Failed to save daily labour shifts:", error);
+      toast.error(error.response?.data?.message || "Failed to save labour shifts");
+    } finally {
+      setSavingLabour(false);
     }
   };
 
@@ -371,14 +504,93 @@ const WorkAndMaterialEntry = () => {
     }
   };
 
+  const updateBudgetExpenseInput = (budgetId, field, value) => {
+    setBudgetExpenseInputs(previous => ({
+      ...previous,
+      [budgetId]: { ...previous[budgetId], [field]: value }
+    }));
+  };
+
+  const saveBudgetExpenseEntry = async (budget) => {
+    const existing = budgetExpenseData[budget.id]?.entries?.[0];
+    if (existing && !existing.is_editable) {
+      toast.error("This budget expense is outside the 48-hour edit window");
+      return;
+    }
+    const input = budgetExpenseInputs[budget.id] || {};
+    const description = String(input.item_description ?? existing?.item_description ?? "").trim();
+    const uom = String(input.uom ?? existing?.uom ?? "").trim();
+    const quantity = Number(input.quantity ?? existing?.quantity);
+    const rate = Number(input.rate ?? existing?.rate);
+    if (!description || !uom || !Number.isFinite(quantity) || quantity <= 0 ||
+        !Number.isFinite(rate) || rate < 0) {
+      toast.error("Enter a description, UOM, positive quantity, and non-negative rate");
+      return;
+    }
+    if (!userId) {
+      toast.error("Invalid user ID");
+      return;
+    }
+    const value = Number((quantity * rate).toFixed(2));
+    const payload = {
+      actual_budget_id: budget.id,
+      entry_date: selectedDate,
+      item_description: description,
+      uom,
+      quantity,
+      rate,
+      actual_value: value
+    };
+
+    setSavingBudgetExpense(true);
+    try {
+      if (existing) {
+        await axios.put(`${API}/site-incharge/update-budget-expense-entry`, {
+          ...payload,
+          entry_id: existing.id,
+          updated_by: Number(userId)
+        });
+      } else {
+        await axios.post(`${API}/site-incharge/save-budget-expense`, {
+          ...payload,
+          created_by: Number(userId)
+        });
+      }
+      const response = await axios.get(`${API}/site-incharge/budget-expense-details`, {
+        params: { actual_budget_id: budget.id, date: selectedDate }
+      });
+      setBudgetExpenseData(previous => ({ ...previous, [budget.id]: response.data.data }));
+      setBudgetExpenseInputs(previous => ({ ...previous, [budget.id]: {} }));
+      toast.success(response.data.message || "Budget expense saved");
+    } catch (error) {
+      console.error("Failed to save budget expense:", error);
+      toast.error(error.response?.data?.message || "Failed to save budget expense");
+    } finally {
+      setSavingBudgetExpense(false);
+    }
+  };
+
   const acknowledgedDispatches = dispatches.filter(dispatch => usageData[dispatch.id]?.acknowledgement);
   const workLabel = selectedWorkDescription?.label || "selected work";
+  const dailyLabourCost = assignedLabours.reduce((total, labour) => {
+    const shift = Number(labourShiftInputs[labour.assignment_id] ?? labour.shift) || 0;
+    return total + shift * (Number(labour.shift_rate) || 0);
+  }, 0);
+  const dailyMaterialCost = acknowledgedDispatches.reduce((total, dispatch) => {
+    const entries = usageData[dispatch.id]?.entries || [];
+    const quantity = entries.reduce((sum, entry) => sum + (Number(entry.overall_qty) || 0), 0);
+    return total + quantity * (Number(dispatch.rate) || 0);
+  }, 0);
+  const dailyBudgetExpenseCost = budgetHeads.reduce((total, budget) => {
+    const entries = budgetExpenseData[budget.id]?.entries || [];
+    return total + entries.reduce((sum, entry) => sum + (Number(entry.actual_value) || 0), 0);
+  }, 0);
 
   return (
     <div className="min-h-screen bg-gray-100 p-4">
       <div className="mx-auto max-w-5xl">
         <h1 className="mb-1 text-xl font-bold text-gray-900">Work Completion & Material Usage</h1>
-        <p className="mb-4 text-sm text-gray-600">Record work progress and the materials used for that work from one screen.</p>
+        <p className="mb-4 text-sm text-gray-600">Record work completion, labour shifts, materials, and budget-head expenses from one screen.</p>
 
         <section className="mb-5 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-3">
           <label className="text-sm font-medium text-gray-700">
@@ -403,13 +615,14 @@ const WorkAndMaterialEntry = () => {
           </label>
         </section>
 
-        {loading && <div className="py-8 text-center text-gray-500">Loading work and material details...</div>}
-        {!loading && selectedWorkDescription && workRecords.length === 0 && (
+        {loading && <div className="py-8 text-center text-gray-500">Loading work, labour, material, and budget details...</div>}
+        {!loading && selectedWorkDescription && workRecords.length === 0 && budgetHeads.length === 0 && (
           <div className="rounded-lg bg-white p-5 text-sm text-gray-600 shadow-sm">No work completion items found for this work description.</div>
         )}
 
-        {!loading && workRecords.length > 0 && (
+        {!loading && (workRecords.length > 0 || budgetHeads.length > 0) && (
           <div className="space-y-5">
+            {workRecords.length > 0 && (
             <section className="rounded-lg bg-white p-4 shadow-sm">
               <h2 className="mb-3 font-semibold text-gray-800">Work Completion — {workLabel}</h2>
               <div className="space-y-4">
@@ -462,12 +675,249 @@ const WorkAndMaterialEntry = () => {
                 })}
               </div>
             </section>
+            )}
+
+            <section className="rounded-lg bg-white p-4 shadow-sm">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold text-gray-800">Daily Labour & Shift Cost — {workLabel}</h2>
+                  <p className="text-sm text-gray-600">
+                    Enter shifts worked on {selectedDate}. Labour cost is shift cost × shifts.
+                  </p>
+                </div>
+                <div className="rounded-lg bg-amber-50 px-4 py-2 text-right">
+                  <div className="text-xs font-medium uppercase tracking-wide text-amber-700">Daily Labour Cost</div>
+                  <div className="text-lg font-bold text-amber-900">₹{dailyLabourCost.toFixed(2)}</div>
+                </div>
+              </div>
+              {assignedLabours.length === 0 ? (
+                <p className="rounded-md bg-amber-50 p-3 text-sm text-amber-800">
+                  No labour is assigned to this work for {selectedDate}. Add the assignment and date range in Labour Assignment first.
+                </p>
+              ) : (
+                <>
+                  <div className="space-y-3">
+                    {assignedLabours.map(labour => {
+                      const shift = Number(labourShiftInputs[labour.assignment_id]) || 0;
+                      const shiftRate = Number(labour.shift_rate) || 0;
+                      const canEdit = !labour.attendance_id || labour.is_editable;
+                      return (
+                        <article key={labour.assignment_id} className="grid grid-cols-1 items-center gap-3 rounded-lg border border-gray-200 p-3 sm:grid-cols-[minmax(0,1fr)_9rem_1fr_9rem]">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <HardHat size={17} className="shrink-0 text-amber-600" />
+                            <div className="min-w-0">
+                              <div className="truncate font-medium text-gray-800">{labour.full_name}</div>
+                              <div className="text-xs text-gray-500">Labour #{labour.labour_id}</div>
+                            </div>
+                          </div>
+                          <label className="text-xs font-medium text-gray-600">
+                            Shifts worked
+                            <input
+                              type="number"
+                              min="0.1"
+                              max="99.9"
+                              step="0.1"
+                              value={labourShiftInputs[labour.assignment_id] ?? ""}
+                              disabled={!canEdit}
+                              onChange={event => setLabourShiftInputs(previous => ({
+                                ...previous,
+                                [labour.assignment_id]: event.target.value
+                              }))}
+                              placeholder="e.g. 1.5"
+                              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
+                            />
+                          </label>
+                          <label className="text-xs font-medium text-gray-600">
+                            Remark
+                            <input
+                              type="text"
+                              maxLength={255}
+                              value={labourRemarksInputs[labour.assignment_id] ?? ""}
+                              disabled={!canEdit}
+                              onChange={event => setLabourRemarksInputs(previous => ({
+                                ...previous,
+                                [labour.assignment_id]: event.target.value
+                              }))}
+                              placeholder="Optional"
+                              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
+                            />
+                          </label>
+                          <div className="text-sm sm:text-right">
+                            <div className="text-xs text-gray-500">₹{shiftRate.toFixed(2)} / shift</div>
+                            <div className="font-semibold text-gray-800">Cost: ₹{(shift * shiftRate).toFixed(2)}</div>
+                            {!canEdit && <div className="text-xs text-gray-500">Edit window expired</div>}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={saveLabourAttendance}
+                      disabled={savingLabour || !assignedLabours.some(labour => !labour.attendance_id || labour.is_editable)}
+                      className="inline-flex items-center gap-2 rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Save size={16} />{savingLabour ? "Saving shifts..." : "Save daily shifts"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </section>
+
+            <section className="rounded-lg bg-white p-4 shadow-sm">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold text-gray-800">Budget Expense Entry — {workLabel}</h2>
+                  <p className="text-sm text-gray-600">
+                    Enter each budget head expense for {selectedDate}. Value is calculated as quantity × rate.
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Labour and material budget heads are recorded in their sections above and are not duplicated here.
+                  </p>
+                </div>
+                <div className="rounded-lg bg-indigo-50 px-4 py-2 text-right">
+                  <div className="text-xs font-medium uppercase tracking-wide text-indigo-700">Daily Budget Expenses</div>
+                  <div className="text-lg font-bold text-indigo-900">₹{dailyBudgetExpenseCost.toFixed(2)}</div>
+                </div>
+              </div>
+
+              {budgetHeads.length === 0 ? (
+                <p className="rounded-md bg-gray-50 p-3 text-sm text-gray-600">
+                  No additional budget expense heads are configured for this work description.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {budgetHeads.map(budget => {
+                    const details = budgetExpenseData[budget.id] || {};
+                    const existing = details.entries?.[0];
+                    const input = budgetExpenseInputs[budget.id] || {};
+                    const description = input.item_description ?? existing?.item_description ?? "";
+                    const uom = input.uom ?? existing?.uom ?? "";
+                    const quantity = input.quantity ?? (existing?.quantity ?? "");
+                    const rate = input.rate ?? (existing?.rate ?? "");
+                    const quantityNumber = Number(quantity);
+                    const rateNumber = Number(rate);
+                    const calculatedValue = Number.isFinite(quantityNumber) && quantityNumber > 0 &&
+                      Number.isFinite(rateNumber) && rateNumber >= 0
+                      ? Number((quantityNumber * rateNumber).toFixed(2))
+                      : null;
+                    const canEdit = !existing || existing.is_editable;
+
+                    return (
+                      <article key={budget.id} className="rounded-lg border border-gray-200 p-4">
+                        <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <h3 className="font-semibold text-gray-800">{budget.expense_name}</h3>
+                            <p className="text-xs text-gray-500">
+                              Budget: ₹{(Number(budget.splitted_budget) || 0).toFixed(2)}
+                              {" · "}Spent to date: ₹{(Number(details.cumulative?.actual_value) || 0).toFixed(2)}
+                            </p>
+                          </div>
+                          {existing && !canEdit && (
+                            <span className="text-xs text-gray-500">Edit window expired</span>
+                          )}
+                        </div>
+
+                        {existing && (
+                          <div className="mb-3 rounded-md bg-gray-50 p-3 text-sm text-gray-700">
+                            <div className="font-medium">Saved for {selectedDate}</div>
+                            <div>
+                              {existing.item_description || existing.remarks || "Expense"}
+                              {existing.uom ? ` · ${existing.quantity} ${existing.uom}` : ""}
+                              {existing.rate !== null && existing.rate !== undefined
+                                ? ` · ₹${Number(existing.rate).toFixed(2)} / unit`
+                                : ""}
+                              {" · "}Value: ₹{(Number(existing.actual_value) || 0).toFixed(2)}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                          <label className="text-xs font-medium text-gray-600 lg:col-span-2">
+                            Description
+                            <input
+                              type="text"
+                              maxLength={255}
+                              value={description}
+                              disabled={!canEdit}
+                              onChange={event => updateBudgetExpenseInput(budget.id, "item_description", event.target.value)}
+                              placeholder="Expense description"
+                              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
+                            />
+                          </label>
+                          <label className="text-xs font-medium text-gray-600">
+                            UOM
+                            <input
+                              type="text"
+                              maxLength={50}
+                              value={uom}
+                              disabled={!canEdit}
+                              onChange={event => updateBudgetExpenseInput(budget.id, "uom", event.target.value)}
+                              placeholder="e.g. Nos, Ltr"
+                              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
+                            />
+                          </label>
+                          <label className="text-xs font-medium text-gray-600">
+                            Quantity
+                            <input
+                              type="number"
+                              min="0.001"
+                              step="0.001"
+                              value={quantity}
+                              disabled={!canEdit}
+                              onChange={event => updateBudgetExpenseInput(budget.id, "quantity", event.target.value)}
+                              placeholder="Qty"
+                              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
+                            />
+                          </label>
+                          <div className="grid grid-cols-2 gap-2 lg:contents">
+                            <label className="text-xs font-medium text-gray-600">
+                              Rate
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={rate}
+                                disabled={!canEdit}
+                                onChange={event => updateBudgetExpenseInput(budget.id, "rate", event.target.value)}
+                                placeholder="Rate"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
+                              />
+                            </label>
+                            <div className="text-xs font-medium text-gray-600">
+                              Value
+                              <div className="mt-1 flex min-h-10 items-center rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800">
+                                {calculatedValue === null ? "—" : `₹${calculatedValue.toFixed(2)}`}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => saveBudgetExpenseEntry(budget)}
+                            disabled={savingBudgetExpense || !canEdit}
+                            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Save size={16} />
+                            {savingBudgetExpense ? "Saving expense..." : existing ? "Update expense" : "Save expense"}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
 
             <section className="rounded-lg bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="font-semibold text-gray-800">Materials Used — {workLabel}</h2>
                   <p className="text-sm text-gray-600">Select one or more acknowledged materials and enter the quantity used and a remark for each.</p>
+                  <p className="mt-1 text-sm font-medium text-indigo-700">Material cost recorded for {selectedDate}: ₹{dailyMaterialCost.toFixed(2)}</p>
                 </div>
                 <button onClick={saveMaterialUsage} disabled={savingMaterials || selectedMaterials.size === 0} className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700 disabled:opacity-50">
                   <Save size={16} />{savingMaterials ? "Saving..." : `Save ${selectedMaterials.size || ""} material(s)`}

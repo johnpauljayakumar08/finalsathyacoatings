@@ -192,6 +192,7 @@ const MaterialDispatch = () => {
   const [vehicles, setVehicles] = useState([]);
   const [drivers, setDrivers] = useState([]);
   const [dispatchQuantities, setDispatchQuantities] = useState({});
+  const [selectedDispatchItems, setSelectedDispatchItems] = useState({});
   const [remarks, setRemarks] = useState({});
   const [isTransportModalOpen, setIsTransportModalOpen] = useState(false);
   const [createdBy, setCreatedBy] = useState("");
@@ -424,11 +425,13 @@ const saveMasterDcNo = async () => {
 
       // Initialize dispatch quantities and remarks
       const newDispatchQuantities = {};
+      const newSelectedDispatchItems = {};
       const newRemarks = {};
       materials.forEach((assignment) => {
         newDispatchQuantities[assignment.id] = {
           dispatch_qty: 0,
         };
+        newSelectedDispatchItems[assignment.id] = false;
         newRemarks[assignment.id] = {
           comp_a_remarks: "",
           comp_b_remarks: "",
@@ -436,6 +439,7 @@ const saveMasterDcNo = async () => {
         };
       });
       setDispatchQuantities(newDispatchQuantities);
+      setSelectedDispatchItems(newSelectedDispatchItems);
       setRemarks(newRemarks);
     } catch (error) {
       console.error("Error fetching material assignments:", error);
@@ -518,6 +522,7 @@ const saveMasterDcNo = async () => {
     setWorkDescriptions([]);
     setAssignedMaterials([]);
     setDispatchQuantities({});
+    setSelectedDispatchItems({});
     setRemarks({});
     setNextDcNo("");
     setMasterDcNo("");
@@ -560,6 +565,7 @@ const saveMasterDcNo = async () => {
     setWorkDescriptions([]);
     setAssignedMaterials([]);
     setDispatchQuantities({});
+    setSelectedDispatchItems({});
     setRemarks({});
     setNextDcNo("");
     setTransportData({
@@ -621,6 +627,7 @@ const saveMasterDcNo = async () => {
     setWorkDescriptions([]);
     setAssignedMaterials([]);
     setDispatchQuantities({});
+    setSelectedDispatchItems({});
     setRemarks({});
     setNextDcNo("");
     const selectedSiteData = sites.find((site) => site.site_id === site_id);
@@ -659,6 +666,7 @@ const saveMasterDcNo = async () => {
   const handleWorkDescChange = (selectedOption) => {
     const desc_id = selectedOption ? selectedOption.value : "";
     setSelectedWorkDesc(desc_id);
+    setSelectedDispatchItems({});
     setError(null);
   };
 
@@ -751,6 +759,13 @@ const saveMasterDcNo = async () => {
     }));
   };
 
+  const handleDispatchItemSelection = (assignmentId, selected) => {
+    setSelectedDispatchItems((prev) => ({
+      ...prev,
+      [assignmentId]: selected,
+    }));
+  };
+
   // Handle remarks input changes
   const handleRemarksChange = (assignmentId, field, value) => {
     setRemarks((prev) => ({
@@ -808,10 +823,18 @@ const saveMasterDcNo = async () => {
     if (!dispatchData.dc_no || !dispatchData.dispatch_date || !dispatchData.order_no || !dispatchData.vendor_code || !selectedWorkDesc || !createdBy) {
       return false;
     }
-    const filteredMaterials = assignedMaterials.filter((assignment) => assignment.desc_id === selectedWorkDesc && assignment.dispatch_status === "not-dispatched");
-    for (const assignment of filteredMaterials) {
+    const selectedMaterials = assignedMaterials.filter((assignment) =>
+      assignment.desc_id === selectedWorkDesc &&
+      assignment.dispatch_status === "not-dispatched" &&
+      selectedDispatchItems[assignment.id] &&
+      dispatchQuantities[assignment.id]?.dispatch_qty > 0
+    );
+    if (selectedMaterials.length === 0) {
+      return false;
+    }
+    for (const assignment of selectedMaterials) {
       const assignmentId = assignment.id;
-      const dispatchQty = dispatchQuantities[assignmentId]?.dispatch_qty || 0;
+      const dispatchQty = dispatchQuantities[assignmentId].dispatch_qty;
       const assignmentRemarks = remarks[assignmentId];
       const { comp_a_qty, comp_b_qty, comp_c_qty } = calculateComponentQuantities(assignment, dispatchQty);
       if (comp_a_qty !== null && !assignmentRemarks?.comp_a_remarks) {
@@ -823,11 +846,8 @@ const saveMasterDcNo = async () => {
       if (comp_c_qty !== null && !assignmentRemarks?.comp_c_remarks) {
         return false;
       }
-      if (dispatchQty <= 0) {
-        return false;
-      }
     }
-    return filteredMaterials.length > 0;
+    return true;
   };
 
 // Handle dispatch form submission - FIXED & UPDATED
@@ -856,7 +876,9 @@ const handleDispatchSubmit = async () => {
     const dispatchPayload = assignedMaterials
       .filter((assignment) => 
         assignment.desc_id === selectedWorkDesc && 
-        assignment.dispatch_status === "not-dispatched"
+        assignment.dispatch_status === "not-dispatched" &&
+        selectedDispatchItems[assignment.id] &&
+        dispatchQuantities[assignment.id]?.dispatch_qty > 0
       )
       .map((assignment) => {
         const dispatchQty = dispatchQuantities[assignment.id]?.dispatch_qty || 0;
@@ -878,11 +900,9 @@ const handleDispatchSubmit = async () => {
           comp_c_remarks: comp_c_qty !== null ? (remarks[assignment.id]?.comp_c_remarks || "").trim() : null,
           master_dc_no: masterDcNo ? masterDcNo.trim() : null,
         };
-      })
-      .filter((payload) => payload.dispatch_qty > 0);
-
+      });
     if (dispatchPayload.length === 0) {
-      throw new Error("Please enter at least one dispatch quantity.");
+      throw new Error("Select at least one material line and enter a positive dispatch quantity.");
     }
 
     // Step 3: Prepare transport payload (Critical fixes for your backend)
@@ -967,6 +987,7 @@ const handleDispatchSubmit = async () => {
     });
 
     setDispatchQuantities({});
+    setSelectedDispatchItems({});
     setRemarks({});
     setSelectedWorkDesc("");
     setIsTransportModalOpen(false);
@@ -1390,6 +1411,7 @@ const handleDispatchSubmit = async () => {
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gradient-to-r from-teal-600 to-teal-700 text-white">
                     <tr>
+                      <th className="px-6 py-4 text-left text-sm font-semibold tracking-wider">Dispatch</th>
                       <th className="px-6 py-4 text-left text-sm font-semibold tracking-wider">#</th>
                       <th className="px-6 py-4 text-left text-sm font-semibold tracking-wider">Material Details</th>
                       <th className="px-6 py-4 text-left text-sm font-semibold tracking-wider">Assigned Quantity</th>
@@ -1405,7 +1427,16 @@ const handleDispatchSubmit = async () => {
                       const { comp_a_qty, comp_b_qty, comp_c_qty } = calculateComponentQuantities(assignment, dispatchQty);
                       return (
                         <tr key={assignment.id} className="hover:bg-teal-50 transition-colors duration-200">
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{index + 1}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(selectedDispatchItems[assignment.id])}
+                            onChange={(e) => handleDispatchItemSelection(assignment.id, e.target.checked)}
+                            aria-label={`Include ${assignment.item_name || "material"} in this dispatch`}
+                            className="h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500"
+                          />
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{index + 1}</td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
                             <div className="space-y-1">
                               <p className="font-medium">{assignment.item_name || "N/A"} {getRatioString(assignment)}</p>
@@ -1525,6 +1556,15 @@ const handleDispatchSubmit = async () => {
                   <div key={assignment.id} className="bg-white rounded-xl shadow-lg border border-gray-100 p-5 space-y-6">
                     <div className="flex justify-between items-center">
                       <span className="text-sm font-medium text-gray-900">#{index + 1}</span>
+                      <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(selectedDispatchItems[assignment.id])}
+                          onChange={(e) => handleDispatchItemSelection(assignment.id, e.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500"
+                        />
+                        Dispatch this item
+                      </label>
                     </div>
                     <div>
                       <p className="text-sm font-medium text-gray-700">Material Details</p>
@@ -1939,12 +1979,6 @@ onNewEntryChange={() => handleNewEntryDropdown("provider_id")}
 };
 
 export default MaterialDispatch;
-
-
-
-
-
-
 
 
 

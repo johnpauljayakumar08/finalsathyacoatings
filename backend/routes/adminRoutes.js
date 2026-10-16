@@ -16,6 +16,7 @@ router.get('/work-descriptions/:siteId', adminController.getWorkDescriptions);
 // router.get('/completion-entries-by-site/:siteId', adminController.getCompletionEntriesBySite);
 
 router.get('/completion-entries-by-site/:siteId/:descId', adminController.getCompletionEntriesBySite);
+router.get('/reckoner-daily-cost-details', adminController.getReckonerDailyCostDetails);
 // Route to get PO reckoner totals by site ID
 router.get('/po-reckoner-totals/:siteId/:descId', adminController.getPoReckonerTotals);
 // Route to get expense details by site ID
@@ -57,6 +58,7 @@ router.get('/site-engineers', adminController.getSiteEngineers);
 // Route to add labour
 router.post('/add-labour', adminController.addLabour);
 router.post('/import-labours', adminController.importLabours);
+router.post('/import-employees', adminController.importEmployees);
 
 router.get("/labour", adminController.getLabourEmployees);
 router.post("/save-labour-assignment", adminController.saveLabourAssignment);

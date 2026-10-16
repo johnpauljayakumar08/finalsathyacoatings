@@ -1476,7 +1476,8 @@ exports.getAssignedLabours = async (req, res) => {
 
     // Enhanced query to join with labour table for full_name and mobile, and include created_at
     const [labours] = await db.query(
-      `SELECT la.id, la.labour_id, l.full_name, l.mobile, la.from_date, la.to_date, la.salary, la.created_at
+      `SELECT la.id, la.labour_id, l.full_name, l.mobile, la.from_date, la.to_date,
+              COALESCE(NULLIF(la.salary, 0), l.approved_salary) AS salary, la.created_at
        FROM labour_assignment la 
        JOIN labour l ON la.labour_id = l.id
        WHERE la.project_id = ? AND la.site_id = ? AND la.desc_id = ?`,
@@ -1543,10 +1544,10 @@ exports.saveLabourAttendance = async (req, res) => {
         console.log('Validation failed: entry_date missing or invalid format');
         return res.status(400).json({ status: 'error', message: 'entry_date is required in YYYY-MM-DD format for each attendance entry' });
       }
-      const parsedShift = parseFloat(shift);
-      if (isNaN(parsedShift) || parsedShift < 0) {
-        console.log('Validation failed: shift must be a non-negative number');
-        return res.status(400).json({ status: 'error', message: 'shift is required and must be a non-negative number for each attendance entry' });
+      const parsedShift = Number(shift);
+      if (!Number.isFinite(parsedShift) || parsedShift <= 0 || parsedShift > 99.9 || !Number.isInteger(parsedShift * 10)) {
+        console.log('Validation failed: shift must be a positive number with at most one decimal place');
+        return res.status(400).json({ status: 'error', message: 'shift must be a positive number up to 99.9 with at most one decimal place' });
       }
       if (remarks && typeof remarks !== 'string') {
         return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
@@ -1651,7 +1652,9 @@ exports.saveLabourAttendance = async (req, res) => {
 
 exports.saveLabourAssignment = async (req, res) => {
   try {
-    const { project_id, site_id, desc_id, labour_ids, from_date, to_date, created_by } = req.body;
+    const {
+      project_id, site_id, desc_id, labour_ids, labour_assignments, from_date, to_date, created_by
+    } = req.body;
     console.log("Received payload:", req.body); // Debug log
 
     // Basic input validation
@@ -1667,9 +1670,13 @@ exports.saveLabourAssignment = async (req, res) => {
       console.log("Validation failed: desc_id missing or not a number");
       return res.status(400).json({ status: "error", message: "desc_id is required and must be a number" });
     }
-    if (!labour_ids || !Array.isArray(labour_ids) || labour_ids.length === 0) {
-      console.log("Validation failed: labour_ids missing, not an array, or empty");
-      return res.status(400).json({ status: "error", message: "labour_ids is required and must be a non-empty array" });
+    const assignmentInputs = Array.isArray(labour_assignments)
+      ? labour_assignments
+      : Array.isArray(labour_ids)
+        ? labour_ids.map((labour_id) => ({ labour_id }))
+        : [];
+    if (assignmentInputs.length === 0) {
+      return res.status(400).json({ status: "error", message: "Select at least one labour and enter its shift cost" });
     }
     if (!from_date || !/^\d{4}-\d{2}-\d{2}$/.test(from_date)) {
       console.log("Validation failed: from_date missing or invalid format");
@@ -1706,10 +1713,32 @@ exports.saveLabourAssignment = async (req, res) => {
       console.log("Validation failed: Invalid desc_id", desc_id);
       return res.status(400).json({ status: "error", message: "Invalid desc_id" });
     }
-    const [labours] = await db.query("SELECT id FROM labour WHERE id IN (?)", [labour_ids]);
-    if (labours.length !== labour_ids.length) {
-      console.log("Validation failed: Invalid labour_ids", labour_ids);
+    const labourIds = assignmentInputs.map((assignment) => Number(assignment.labour_id));
+    if (labourIds.some((id) => !Number.isInteger(id) || id <= 0) || new Set(labourIds).size !== labourIds.length) {
+      return res.status(400).json({ status: "error", message: "Labour selection contains invalid or duplicate IDs" });
+    }
+    const [labours] = await db.query(
+      "SELECT id, approved_salary FROM labour WHERE id IN (?)",
+      [labourIds]
+    );
+    if (labours.length !== labourIds.length) {
       return res.status(400).json({ status: "error", message: "One or more labour_ids are invalid" });
+    }
+    const labourById = new Map(labours.map((labour) => [Number(labour.id), labour]));
+    const assignmentsWithRates = assignmentInputs.map((assignment) => {
+      const labour = labourById.get(Number(assignment.labour_id));
+      const shiftCost = assignment.shift_cost === undefined || assignment.shift_cost === null || assignment.shift_cost === ""
+        ? Number(labour?.approved_salary)
+        : Number(assignment.shift_cost);
+      return { labour_id: Number(assignment.labour_id), shift_cost: shiftCost };
+    });
+    if (assignmentsWithRates.some((assignment) =>
+      !Number.isFinite(assignment.shift_cost) || assignment.shift_cost <= 0
+    )) {
+      return res.status(400).json({
+        status: "error",
+        message: "Each selected labour must have a positive shift cost",
+      });
     }
     const [user] = await db.query("SELECT user_id FROM users WHERE user_id = ?", [created_by]);
     if (user.length === 0) {
@@ -1717,13 +1746,15 @@ exports.saveLabourAssignment = async (req, res) => {
       return res.status(400).json({ status: "error", message: "Invalid created_by user_id" });
     }
 
-    // Insert a row for each labour_id
-    for (const labour_id of labour_ids) {
+    for (const assignment of assignmentsWithRates) {
       await db.query(
         `INSERT INTO labour_assignment 
          (project_id, site_id, desc_id, labour_id, from_date, to_date, created_by, created_at, salary)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NULL)`,
-        [project_id, site_id, desc_id, labour_id, from_date, to_date, created_by]
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+        [
+          project_id, site_id, desc_id, assignment.labour_id,
+          from_date, to_date, created_by, assignment.shift_cost,
+        ]
       );
     }
 
@@ -1779,18 +1810,20 @@ exports.updateLabourAssignment = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'from_date cannot be later than to_date' });
     }
 
-    // Validate salary if provided
+    // Validate cost per shift
     let validatedSalary = null;
     if (salary !== undefined) {
       if (salary === null || salary === '') {
-        validatedSalary = null;
+        return res.status(400).json({ status: 'error', message: 'Shift cost per shift is required' });
       } else {
-        const parsedSalary = parseFloat(salary);
-        if (isNaN(parsedSalary) || parsedSalary < 0) {
-          return res.status(400).json({ status: 'error', message: 'salary must be a non-negative number' });
+        const parsedSalary = Number(salary);
+        if (!Number.isFinite(parsedSalary) || parsedSalary <= 0) {
+          return res.status(400).json({ status: 'error', message: 'Shift cost per shift must be a positive number' });
         }
         validatedSalary = parsedSalary;
       }
+    } else {
+      return res.status(400).json({ status: 'error', message: 'Shift cost per shift is required' });
     }
 
     // Validate updated_by
@@ -1859,7 +1892,7 @@ exports.updateLabourAssignment = async (req, res) => {
 
     console.log('History insert result: success');
 
-    // Update the assignment (always include salary set to validatedSalary, which could be null)
+    // Update the assignment with the validated shift cost.
     console.log('Updating labour_assignment...');
     const updateQuery = `
       UPDATE labour_assignment
@@ -1938,22 +1971,24 @@ exports.getLabourAttendance = async (req, res) => {
       });
     }
 
-    // Query with DISTINCT to avoid duplicate rows, include attendance_id, remarks, created_at, updated_at
     const [labours] = await db.query(
       `SELECT DISTINCT 
          la.id as assignment_id, 
          la.labour_id, 
          l.full_name, 
+         COALESCE(NULLIF(la.salary, 0), l.approved_salary) AS shift_rate,
          lat.id as attendance_id,
          lat.shift,
+         ROUND(lat.shift * COALESCE(NULLIF(la.salary, 0), l.approved_salary), 2) AS labour_cost,
          lat.remarks,
          lat.created_at,
          lat.updated_at
        FROM labour_assignment la 
        JOIN labour l ON la.labour_id = l.id 
        LEFT JOIN labour_attendance lat ON la.id = lat.labour_assignment_id AND lat.entry_date = ?
-       WHERE la.project_id = ? AND la.site_id = ? AND la.desc_id = ?`,
-      [entry_date, project_id, site_id, desc_id]
+       WHERE la.project_id = ? AND la.site_id = ? AND la.desc_id = ?
+         AND la.from_date <= ? AND la.to_date >= ?`,
+      [entry_date, project_id, site_id, desc_id, entry_date, entry_date]
     );
 
     // Log the number of records returned for debugging
@@ -2032,6 +2067,7 @@ exports.getBudgetDetails = async (req, res) => {
         ab.actual_value, 
         ab.difference_value, 
         ab.remarks,
+        pb.desc_id,
         o.expense_name,
         wd.desc_name AS work_descriptions
       FROM actual_budget ab
@@ -2071,8 +2107,9 @@ exports.getBudgetExpenseDetails = async (req, res) => {
 
     // Fetch entries for the specific date
     const [entries] = await db.query(
-      `SELECT id, actual_value, remarks, created_at, created_by, updated_at, updated_by
-       FROM actual_budget_history 
+      `SELECT id, actual_value, remarks, item_description, uom, quantity, rate,
+              created_at, created_by, updated_at, updated_by
+       FROM actual_budget_history
        WHERE actual_budget_id = ? AND entry_date = ? 
        ORDER BY created_at DESC`,
       [budgetId, date]
@@ -2124,7 +2161,17 @@ exports.getBudgetExpenseDetails = async (req, res) => {
 
 exports.saveBudgetExpense = async (req, res) => {
   try {
-    const { actual_budget_id, entry_date, actual_value, remarks, created_by } = req.body;
+    const {
+      actual_budget_id,
+      entry_date,
+      actual_value,
+      remarks,
+      item_description,
+      uom,
+      quantity,
+      rate,
+      created_by
+    } = req.body;
 
     console.log('Save budget expense request body:', req.body);
 
@@ -2167,7 +2214,31 @@ exports.saveBudgetExpense = async (req, res) => {
       return parsed;
     };
 
-    const validatedActualValue = validateValue(actual_value, 'actual_value');
+    let validatedActualValue = validateValue(actual_value, 'actual_value');
+    const hasLineDetails = [item_description, uom, quantity, rate]
+      .some(value => value !== undefined && value !== null && value !== '');
+    let lineDetails = null;
+    if (hasLineDetails) {
+      const description = typeof item_description === 'string' ? item_description.trim() : '';
+      const unit = typeof uom === 'string' ? uom.trim() : '';
+      const parsedQuantity = Number(quantity);
+      const parsedRate = Number(rate);
+      if (!description || description.length > 255 || !unit || unit.length > 50 ||
+          !Number.isFinite(parsedQuantity) || parsedQuantity <= 0 ||
+          !Number.isFinite(parsedRate) || parsedRate < 0) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Description, UOM, positive quantity, and non-negative rate are required for a detailed expense'
+        });
+      }
+      lineDetails = {
+        item_description: description,
+        uom: unit,
+        quantity: parsedQuantity,
+        rate: parsedRate
+      };
+      validatedActualValue = Number((parsedQuantity * parsedRate).toFixed(2));
+    }
 
     // Validate remarks if provided
     if (remarks && typeof remarks !== 'string') {
@@ -2192,7 +2263,8 @@ exports.saveBudgetExpense = async (req, res) => {
 
     // Check if entry already exists for this date
     const [existingEntry] = await db.query(
-      `SELECT id, actual_budget_id, actual_value, remarks, created_by, updated_by, created_at, updated_at 
+      `SELECT id, actual_budget_id, actual_value, remarks, item_description, uom, quantity, rate,
+              created_by, updated_by, created_at, updated_at
        FROM actual_budget_history 
        WHERE actual_budget_id = ? AND entry_date = ?`,
       [budgetId, entry_date]
@@ -2227,14 +2299,18 @@ exports.saveBudgetExpense = async (req, res) => {
       // Insert old state into edit history before updating
       await db.query(
         `INSERT INTO actual_budget_edit_history
-         (actual_budget_history_id, actual_budget_id, actual_value, remarks, 
-          created_by, updated_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (actual_budget_history_id, actual_budget_id, actual_value, remarks,
+          item_description, uom, quantity, rate, created_by, updated_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           existing.id,
           budgetId,
           existing.actual_value,
           existing.remarks,
+          existing.item_description,
+          existing.uom,
+          existing.quantity,
+          existing.rate,
           existing.created_by,
           existing.updated_by,
           existing.created_at,
@@ -2248,12 +2324,20 @@ exports.saveBudgetExpense = async (req, res) => {
          SET 
            actual_value = ?,
            remarks = ?,
+           item_description = COALESCE(?, item_description),
+           uom = COALESCE(?, uom),
+           quantity = COALESCE(?, quantity),
+           rate = COALESCE(?, rate),
            updated_by = ?,
            updated_at = NOW()
          WHERE id = ?`,
         [
           newValue,
           remarks || null,
+          lineDetails?.item_description || null,
+          lineDetails?.uom || null,
+          lineDetails?.quantity ?? null,
+          lineDetails?.rate ?? null,
           created_by,  // Use as updater
           existing.id
         ]
@@ -2294,13 +2378,17 @@ exports.saveBudgetExpense = async (req, res) => {
       // Insert new entry into actual_budget_history
       const [insertResult] = await db.query(
         `INSERT INTO actual_budget_history 
-         (actual_budget_id, entry_date, actual_value, remarks, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, NOW())`,
+         (actual_budget_id, entry_date, actual_value, remarks, item_description, uom, quantity, rate, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
           budgetId,
           entry_date,
           newValue,
           remarks || null,
+          lineDetails?.item_description || null,
+          lineDetails?.uom || null,
+          lineDetails?.quantity ?? null,
+          lineDetails?.rate ?? null,
           created_by
         ]
       );
@@ -2359,7 +2447,16 @@ exports.saveBudgetExpense = async (req, res) => {
 
 exports.updateBudgetExpenseEntry = async (req, res) => {
   try {
-    const { entry_id, actual_value, remarks, updated_by } = req.body;
+    const {
+      entry_id,
+      actual_value,
+      remarks,
+      item_description,
+      uom,
+      quantity,
+      rate,
+      updated_by
+    } = req.body;
 
     console.log('Update budget expense entry request body:', req.body);
 
@@ -2396,7 +2493,31 @@ exports.updateBudgetExpenseEntry = async (req, res) => {
       return parsed;
     };
 
-    const validatedActualValue = validateValue(actual_value, 'actual_value');
+    let validatedActualValue = validateValue(actual_value, 'actual_value');
+    const hasLineDetails = [item_description, uom, quantity, rate]
+      .some(value => value !== undefined && value !== null && value !== '');
+    let lineDetails = null;
+    if (hasLineDetails) {
+      const description = typeof item_description === 'string' ? item_description.trim() : '';
+      const unit = typeof uom === 'string' ? uom.trim() : '';
+      const parsedQuantity = Number(quantity);
+      const parsedRate = Number(rate);
+      if (!description || description.length > 255 || !unit || unit.length > 50 ||
+          !Number.isFinite(parsedQuantity) || parsedQuantity <= 0 ||
+          !Number.isFinite(parsedRate) || parsedRate < 0) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Description, UOM, positive quantity, and non-negative rate are required for a detailed expense'
+        });
+      }
+      lineDetails = {
+        item_description: description,
+        uom: unit,
+        quantity: parsedQuantity,
+        rate: parsedRate
+      };
+      validatedActualValue = Number((parsedQuantity * parsedRate).toFixed(2));
+    }
 
     // Validate remarks if provided
     if (remarks && typeof remarks !== 'string') {
@@ -2405,7 +2526,8 @@ exports.updateBudgetExpenseEntry = async (req, res) => {
 
     // Check if entry_id exists
     const [existingEntry] = await db.query(`
-      SELECT id, actual_budget_id, entry_date, actual_value, remarks, created_at, updated_at, created_by, updated_by
+      SELECT id, actual_budget_id, entry_date, actual_value, remarks, item_description, uom, quantity, rate,
+             created_at, updated_at, created_by, updated_by
       FROM actual_budget_history 
       WHERE id = ?
     `, [entryId]);
@@ -2463,14 +2585,18 @@ exports.updateBudgetExpenseEntry = async (req, res) => {
     console.log('Inserting into edit history table...');
     await db.query(
       `INSERT INTO actual_budget_edit_history
-       (actual_budget_history_id, actual_budget_id, actual_value, remarks, 
-        created_by, updated_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (actual_budget_history_id, actual_budget_id, actual_value, remarks,
+        item_description, uom, quantity, rate, created_by, updated_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         entryId,
         currentEntry.actual_budget_id,
         currentEntry.actual_value,
         currentEntry.remarks,
+        currentEntry.item_description,
+        currentEntry.uom,
+        currentEntry.quantity,
+        currentEntry.rate,
         currentEntry.created_by,
         currentEntry.updated_by,
         currentEntry.created_at,
@@ -2487,12 +2613,20 @@ exports.updateBudgetExpenseEntry = async (req, res) => {
        SET
          actual_value = ?,
          remarks = ?,
+         item_description = COALESCE(?, item_description),
+         uom = COALESCE(?, uom),
+         quantity = COALESCE(?, quantity),
+         rate = COALESCE(?, rate),
          updated_by = ?,
          updated_at = NOW()
        WHERE id = ?`,
       [
         newActualValue,
         remarks || null,
+        lineDetails?.item_description || null,
+        lineDetails?.uom || null,
+        lineDetails?.quantity ?? null,
+        lineDetails?.rate ?? null,
         updated_by,
         entryId
       ]
@@ -2611,9 +2745,8 @@ exports.getBudgetWorkDescriptionsBySite = async (req, res) => {
 
 exports.getLabours = async (req, res) => {
   try {
-    // Query to fetch id and full_name from the labour table
     const [labours] = await db.query(
-      `SELECT id, full_name 
+      `SELECT id, full_name, approved_salary
        FROM labour`
     );
 
@@ -4959,18 +5092,20 @@ exports.adminUpdateLabourAssignment = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'from_date cannot be later than to_date' });
     }
 
-    // Validate salary if provided
+    // Validate cost per shift
     let validatedSalary = null;
     if (salary !== undefined) {
       if (salary === null || salary === '') {
-        validatedSalary = null;
+        return res.status(400).json({ status: 'error', message: 'Shift cost per shift is required' });
       } else {
-        const parsedSalary = parseFloat(salary);
-        if (isNaN(parsedSalary) || parsedSalary < 0) {
-          return res.status(400).json({ status: 'error', message: 'salary must be a non-negative number' });
+        const parsedSalary = Number(salary);
+        if (!Number.isFinite(parsedSalary) || parsedSalary <= 0) {
+          return res.status(400).json({ status: 'error', message: 'Shift cost per shift must be a positive number' });
         }
         validatedSalary = parsedSalary;
       }
+    } else {
+      return res.status(400).json({ status: 'error', message: 'Shift cost per shift is required' });
     }
 
     // Validate updated_by
@@ -5025,7 +5160,7 @@ exports.adminUpdateLabourAssignment = async (req, res) => {
 
     console.log('History insert result: success');
 
-    // Update the assignment (always include salary set to validatedSalary, which could be null)
+    // Update the assignment with the validated shift cost.
     console.log('Updating labour_assignment...');
     const updateQuery = `
       UPDATE labour_assignment
@@ -5083,7 +5218,16 @@ exports.adminUpdateLabourAssignment = async (req, res) => {
 // Admin update budget expense entry (no 48-hour check)
 exports.adminUpdateBudgetExpenseEntry = async (req, res) => {
   try {
-    const { entry_id, actual_value, remarks, updated_by } = req.body;
+    const {
+      entry_id,
+      actual_value,
+      remarks,
+      item_description,
+      uom,
+      quantity,
+      rate,
+      updated_by
+    } = req.body;
 
     console.log('Admin update budget expense entry request body:', req.body);
 
@@ -5112,7 +5256,31 @@ exports.adminUpdateBudgetExpenseEntry = async (req, res) => {
       return parsed;
     };
 
-    const validatedActualValue = validateValue(actual_value, 'actual_value');
+    let validatedActualValue = validateValue(actual_value, 'actual_value');
+    const hasLineDetails = [item_description, uom, quantity, rate]
+      .some(value => value !== undefined && value !== null && value !== '');
+    let lineDetails = null;
+    if (hasLineDetails) {
+      const description = typeof item_description === 'string' ? item_description.trim() : '';
+      const unit = typeof uom === 'string' ? uom.trim() : '';
+      const parsedQuantity = Number(quantity);
+      const parsedRate = Number(rate);
+      if (!description || description.length > 255 || !unit || unit.length > 50 ||
+          !Number.isFinite(parsedQuantity) || parsedQuantity <= 0 ||
+          !Number.isFinite(parsedRate) || parsedRate < 0) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Description, UOM, positive quantity, and non-negative rate are required for a detailed expense'
+        });
+      }
+      lineDetails = {
+        item_description: description,
+        uom: unit,
+        quantity: parsedQuantity,
+        rate: parsedRate
+      };
+      validatedActualValue = Number((parsedQuantity * parsedRate).toFixed(2));
+    }
 
     // Validate remarks if provided
     if (remarks && typeof remarks !== 'string') {
@@ -5121,7 +5289,8 @@ exports.adminUpdateBudgetExpenseEntry = async (req, res) => {
 
     // Check if entry_id exists
     const [existingEntry] = await db.query(`
-      SELECT id, actual_budget_id, entry_date, actual_value, remarks, created_at, updated_at, created_by, updated_by
+      SELECT id, actual_budget_id, entry_date, actual_value, remarks, item_description, uom, quantity, rate,
+             created_at, updated_at, created_by, updated_by
       FROM actual_budget_history 
       WHERE id = ?
     `, [entryId]);
@@ -5165,14 +5334,18 @@ exports.adminUpdateBudgetExpenseEntry = async (req, res) => {
     console.log('Inserting into edit history table...');
     await db.query(
       `INSERT INTO actual_budget_edit_history
-       (actual_budget_history_id, actual_budget_id, actual_value, remarks, 
-        created_by, updated_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (actual_budget_history_id, actual_budget_id, actual_value, remarks,
+        item_description, uom, quantity, rate, created_by, updated_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         entryId,
         currentEntry.actual_budget_id,
         currentEntry.actual_value,
         currentEntry.remarks,
+        currentEntry.item_description,
+        currentEntry.uom,
+        currentEntry.quantity,
+        currentEntry.rate,
         currentEntry.created_by,
         currentEntry.updated_by,
         currentEntry.created_at,
@@ -5189,12 +5362,20 @@ exports.adminUpdateBudgetExpenseEntry = async (req, res) => {
        SET
          actual_value = ?,
          remarks = ?,
+         item_description = COALESCE(?, item_description),
+         uom = COALESCE(?, uom),
+         quantity = COALESCE(?, quantity),
+         rate = COALESCE(?, rate),
          updated_by = ?,
          updated_at = NOW()
        WHERE id = ?`,
       [
         newActualValue,
         remarks || null,
+        lineDetails?.item_description || null,
+        lineDetails?.uom || null,
+        lineDetails?.quantity ?? null,
+        lineDetails?.rate ?? null,
         updated_by,
         entryId
       ]
@@ -5296,10 +5477,10 @@ exports.adminSaveLabourAttendance = async (req, res) => {
         console.log('Validation failed: entry_date missing or invalid format');
         return res.status(400).json({ status: 'error', message: 'entry_date is required in YYYY-MM-DD format for each attendance entry' });
       }
-      const parsedShift = parseFloat(shift);
-      if (isNaN(parsedShift) || parsedShift < 0) {
-        console.log('Validation failed: shift must be a non-negative number');
-        return res.status(400).json({ status: 'error', message: 'shift is required and must be a non-negative number for each attendance entry' });
+      const parsedShift = Number(shift);
+      if (!Number.isFinite(parsedShift) || parsedShift <= 0 || parsedShift > 99.9 || !Number.isInteger(parsedShift * 10)) {
+        console.log('Validation failed: shift must be a positive number with at most one decimal place');
+        return res.status(400).json({ status: 'error', message: 'shift must be a positive number up to 99.9 with at most one decimal place' });
       }
       if (remarks && typeof remarks !== 'string') {
         return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
