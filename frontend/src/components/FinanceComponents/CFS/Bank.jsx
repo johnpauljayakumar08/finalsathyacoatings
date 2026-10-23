@@ -13,6 +13,9 @@ const themeColors = {
 };
 
 const Bank = () => {
+  const user = JSON.parse(sessionStorage.getItem('user') || '{}');
+  const canManageBanks = ['md', 'managing_director', 'managingdirector']
+    .includes(String(user.role || '').replace(/[\s-]/g, '').toLowerCase());
   const [banks, setBanks] = useState([]);
   const [paidReceivedData, setPaidReceivedData] = useState(null); // ← New: Store data from paid-received-details
   const [cfsData, setCfsData] = useState(null);
@@ -136,7 +139,10 @@ const Bank = () => {
         opening_balance: addedAmount,
         remarks: editForm.remarks.trim() || `Added ₹${addedAmount.toFixed(2)} to opening balance`,
         updated_by: userId
-      }, { params: { id: editingBank.id } });
+      }, {
+        params: { id: editingBank.id },
+        headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
+      });
 
       await fetchAllData();
       setShowEditModal(false);
@@ -241,13 +247,17 @@ const Bank = () => {
                   return (
                     <tr key={bank.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openLedger(bank)}>
                       <td className="px-6 py-4">
-                        <button
-                          onClick={(e) => openEditModal(e, bank)}
-                          className="flex items-center gap-2 font-medium text-teal-700 hover:underline"
-                        >
-                          <Edit3 size={16} />
-                          {bank.bank_name}
-                        </button>
+                        {canManageBanks ? (
+                          <button
+                            onClick={(e) => openEditModal(e, bank)}
+                            className="flex items-center gap-2 font-medium text-teal-700 hover:underline"
+                          >
+                            <Edit3 size={16} />
+                            {bank.bank_name}
+                          </button>
+                        ) : (
+                          <span className="font-medium text-gray-800">{bank.bank_name}</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-right font-medium text-amber-700">
                         {formatINR(openingBal)}

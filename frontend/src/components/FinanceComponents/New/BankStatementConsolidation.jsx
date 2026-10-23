@@ -6,6 +6,9 @@ import { toast } from 'react-toastify';
 import CreatableSelect from 'react-select/creatable';
 
 const BankStatementConsolidation = () => {
+  const user = JSON.parse(sessionStorage.getItem('user') || '{}');
+  const canManageBanks = ['md', 'managing_director', 'managingdirector']
+    .includes(String(user.role || '').replace(/[\s-]/g, '').toLowerCase());
   const [bankStatements, setBankStatements] = useState([]);
   const [financialYears, setFinancialYears] = useState([]);
   const [costCenters, setCostCenters] = useState([]);
@@ -207,6 +210,8 @@ const BankStatementConsolidation = () => {
         bank_name: bankName,
         available_balance: 0,
         created_by: '1'
+      }, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
       });
       const newBank = response.data.data;
       setBankMasters(prev => [...prev.filter(bank => bank.id !== newBank.id), newBank]);
@@ -966,6 +971,7 @@ const BankStatementConsolidation = () => {
                       placeholder="Select or add a bank..."
                       isClearable
                       isDisabled={!!viewingId}
+                      isValidNewOption={() => canManageBanks}
                       formatCreateLabel={(inputValue) => `Add "${inputValue}" to bank master`}
                     />
                   </div>

@@ -3428,6 +3428,148 @@ exports.getBankMasters = async (req, res) => {
   }
 };
 
+exports.getBankDetails = async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT id, bank_name, opening_balance, available_balance, created_at, updated_at
+      FROM finance_bank_master
+      ORDER BY bank_name
+    `);
+    res.status(200).json({ status: 'success', data: rows });
+  } catch (error) {
+    console.error('Error in getBankDetails:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to retrieve bank details' });
+  }
+};
+
+exports.createBankDetails = async (req, res) => {
+  try {
+    const { bank_name, opening_balance } = req.body;
+    const name = typeof bank_name === 'string' ? bank_name.trim() : '';
+    const openingBalance = Number(opening_balance);
+
+    if (
+      !name ||
+      name.length > 200 ||
+      opening_balance === undefined ||
+      opening_balance === null ||
+      opening_balance === '' ||
+      !Number.isFinite(openingBalance) ||
+      Math.abs(openingBalance) > 9999999999999.99
+    ) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'A bank name (up to 200 characters) and valid opening balance are required'
+      });
+    }
+
+    const [result] = await db.query(
+      `INSERT INTO finance_bank_master
+       (bank_name, opening_balance, available_balance, created_by)
+       VALUES (?, ?, ?, ?)`,
+      [name, openingBalance, openingBalance, String(req.purchaseUser.user_id)]
+    );
+
+    res.status(201).json({
+      status: 'success',
+      message: 'Bank details created successfully',
+      data: { id: result.insertId, bank_name: name, opening_balance: openingBalance }
+    });
+  } catch (error) {
+    console.error('Error in createBankDetails:', error);
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ status: 'error', message: 'Bank name already exists' });
+    }
+    res.status(500).json({ status: 'error', message: 'Failed to create bank details' });
+  }
+};
+
+exports.updateBankDetails = async (req, res) => {
+  const bankId = Number(req.params.id);
+  const { bank_name, opening_balance } = req.body;
+  const name = typeof bank_name === 'string' ? bank_name.trim() : '';
+  const openingBalance = Number(opening_balance);
+  const userId = Number(req.purchaseUser.user_id);
+
+  if (!Number.isInteger(bankId) || bankId <= 0) {
+    return res.status(400).json({ status: 'error', message: 'A valid bank id is required' });
+  }
+  if (
+    !name ||
+    name.length > 200 ||
+    opening_balance === undefined ||
+    opening_balance === null ||
+    opening_balance === '' ||
+    !Number.isFinite(openingBalance) ||
+    Math.abs(openingBalance) > 9999999999999.99
+  ) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'A bank name (up to 200 characters) and valid opening balance are required'
+    });
+  }
+
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    const [banks] = await connection.query(
+      `SELECT bank_name, opening_balance, available_balance, remarks, created_by
+       FROM finance_bank_master
+       WHERE id = ?
+       FOR UPDATE`,
+      [bankId]
+    );
+    if (banks.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ status: 'error', message: 'Bank not found' });
+    }
+
+    const previous = banks[0];
+    await connection.query(
+      `INSERT INTO finance_bank_master_edit_history
+       (finance_bank_master_id, bank_name, opening_balance, available_balance, remarks, created_by, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        bankId,
+        previous.bank_name,
+        previous.opening_balance,
+        previous.available_balance,
+        `Bank details updated by user ${userId}`,
+        Number.parseInt(previous.created_by, 10) || userId,
+        userId
+      ]
+    );
+    await connection.query(
+      `UPDATE finance_bank_master
+       SET bank_name = ?,
+           opening_balance = ?,
+           available_balance = COALESCE(available_balance, 0) + ? - COALESCE(opening_balance, 0),
+           updated_by = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [name, openingBalance, openingBalance, userId, bankId]
+    );
+
+    await connection.commit();
+    res.status(200).json({
+      status: 'success',
+      message: 'Bank details updated successfully',
+      data: { id: bankId, bank_name: name, opening_balance: openingBalance }
+    });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Error in updateBankDetails:', error);
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ status: 'error', message: 'Bank name already exists' });
+    }
+    res.status(500).json({ status: 'error', message: 'Failed to update bank details' });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
 // CREATE bank
 exports.createBankMaster = async (req, res) => {
   try {
@@ -3477,7 +3619,7 @@ exports.updateBankMaster = async (req, res) => {
 
     // Fetch current record
     const [current] = await db.query(
-      `SELECT bank_name, opening_balance, remarks FROM finance_bank_master WHERE id = ?`,
+      `SELECT bank_name, opening_balance, remarks, created_by FROM finance_bank_master WHERE id = ?`,
       [id]
     );
 
@@ -3493,7 +3635,7 @@ exports.updateBankMaster = async (req, res) => {
     const newOpeningBalance = oldOpening + addedAmount;
 
     // Remarks required if amount is being added or bank name changed
-    if ((addedAmount !== 0 || editForm.bank_name.trim() !== oldData.bank_name.trim()) && !remarks?.trim()) {
+    if ((addedAmount !== 0 || bank_name.trim() !== oldData.bank_name.trim()) && !remarks?.trim()) {
       return res.status(400).json({
         status: 'error',
         message: 'Remarks is required when adding to opening balance or changing bank name'
@@ -4960,6 +5102,27 @@ exports.getPaidReceivedDetails = async (req, res) => {
       }
     });
 
+    const [demMovements] = await db.query(`
+      SELECT bank_id, SUM(amount) AS net_amount
+      FROM (
+        SELECT receipt_bank_id AS bank_id, receipt_amount AS amount
+        FROM finance_dem_entry
+        WHERE receipt_bank_id IS NOT NULL
+        UNION ALL
+        SELECT paid_from_bank_id AS bank_id, -debit_amount AS amount
+        FROM finance_dem_entry
+        WHERE paid_from_bank_id IS NOT NULL
+        UNION ALL
+        SELECT paid_to_bank_id AS bank_id, debit_amount AS amount
+        FROM finance_dem_entry
+        WHERE contra_entry = 'yes' AND paid_to_bank_id IS NOT NULL
+      ) AS movements
+      GROUP BY bank_id
+    `);
+    const demMovementByBank = Object.fromEntries(
+      demMovements.map(movement => [movement.bank_id, parseFloat(movement.net_amount) || 0])
+    );
+
     // Update each bank's available_balance (Existing logic - unchanged)
     for (const [bankId, data] of Object.entries(bankMap)) {
       const [bankRow] = await db.query(
@@ -4970,7 +5133,8 @@ exports.getPaidReceivedDetails = async (req, res) => {
       if (bankRow.length === 0) continue;
 
       const openingBalance = parseFloat(bankRow[0].opening_balance) || 0;
-      const newAvailableBalance = openingBalance + data.total_received - data.total_paid;
+      const demMovement = demMovementByBank[bankId] || 0;
+      const newAvailableBalance = openingBalance + data.total_received - data.total_paid + demMovement;
 
       // Log to history (Existing logic - unchanged)
       await db.query(`
@@ -6542,6 +6706,142 @@ exports.deletePurchaseRegister = async (req, res) => {
 
 // ==================== SALES REGISTER ====================
 
+exports.getCompoundPurchaseEntries = async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT id, transaction_date, received_date, supplier_name, description,
+        bill_no, purchase_type, purchased_for, quantity, uom, rate, sale_amount, gst_percentage,
+        gst_amount, total_amount, created_by, created_at
+      FROM finance_compound_purchase_register
+      ORDER BY transaction_date DESC, bill_no DESC, id DESC
+    `);
+    res.json({ status: 'success', data: rows });
+  } catch (error) {
+    console.error('Error fetching compound purchase entries:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch purchase entries' });
+  }
+};
+
+exports.createCompoundPurchaseEntry = async (req, res) => {
+  const {
+    transaction_date, received_date, supplier_name, bill_no, purchase_type,
+    items, created_by
+  } = req.body;
+  if (!transaction_date || !supplier_name?.trim() || !bill_no?.trim() || !created_by ||
+      !['project', 'supply'].includes(purchase_type) || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ status: 'error', message: 'Enter the date, supplier, bill number, purchase type and at least one item' });
+  }
+
+  const validPurchaseUoms = ['NOS', 'KGS', 'LITRE', 'LS'];
+  const preparedItems = items.map(item => {
+    const quantity = Number(item.quantity);
+    const rate = Number(item.rate);
+    const gstPercentage = item.gst_percentage === '' || item.gst_percentage === null || item.gst_percentage === undefined ? 0 : Number(item.gst_percentage);
+    const saleAmount = Math.round(quantity * rate * 100) / 100;
+    const gstAmount = Math.round(saleAmount * gstPercentage) / 100;
+    const purchasedFor = typeof item.purchased_for === 'string' ? item.purchased_for.trim() : '';
+    return { ...item, quantity, rate, gstPercentage, purchasedFor, saleAmount, gstAmount, totalAmount: Math.round((saleAmount + gstAmount) * 100) / 100 };
+  });
+  if (preparedItems.some(item => !item.description?.trim() || item.purchasedFor.length > 255 || !validPurchaseUoms.includes(item.uom) || !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.rate) || item.rate < 0 || !Number.isFinite(item.gstPercentage) || item.gstPercentage < 0 || item.gstPercentage > 100)) {
+    return res.status(400).json({ status: 'error', message: 'Each item needs a description, UOM, positive quantity, valid rate and GST percentage from 0 to 100' });
+  }
+
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    const insertedIds = [];
+    for (const item of preparedItems) {
+      const [result] = await connection.query(`
+        INSERT INTO finance_compound_purchase_register (
+          transaction_date, received_date, supplier_name, bill_no, purchase_type,
+          description, purchased_for, quantity, uom, rate, sale_amount,
+          gst_percentage, gst_amount, total_amount, created_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        transaction_date, received_date || null, supplier_name.trim(), bill_no.trim(), purchase_type,
+        item.description.trim(), item.purchasedFor || null, item.quantity, item.uom.trim(), item.rate,
+        item.saleAmount, item.gstPercentage, item.gstAmount, item.totalAmount, Number(created_by) || null
+      ]);
+      insertedIds.push(result.insertId);
+    }
+    await connection.commit();
+    res.status(201).json({ status: 'success', message: 'Purchase bill saved', data: { ids: insertedIds, item_count: insertedIds.length } });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Error creating compound purchase bill:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to save purchase bill' });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+exports.createSalesInvoice = async (req, res) => {
+  const { transaction_date, customer_name, invoice_no, finance_year_id, sales_type, items, created_by } = req.body;
+  if (!transaction_date || !customer_name?.trim() || !invoice_no?.trim() || !finance_year_id || !created_by || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ status: 'error', message: 'Date, party, invoice number, financial year and at least one particular are required' });
+  }
+  if (!['supply', 'service'].includes(sales_type)) {
+    return res.status(400).json({ status: 'error', message: 'A valid sales type is required' });
+  }
+
+  const allowedUoms = sales_type === 'supply'
+    ? ['NOS', 'KGS', 'LITRE', 'LS']
+    : ['NOS', 'SQFT', 'SQMETER', 'SQINCHE'];
+
+  const preparedItems = items.map(item => {
+    const quantity = Number(item.quantity);
+    const rate = Number(item.rate);
+    const gstPercentage = item.gst_percentage === undefined || item.gst_percentage === null || item.gst_percentage === ''
+      ? 0
+      : Number(item.gst_percentage);
+    const saleAmount = Math.round(quantity * rate * 100) / 100;
+    const gst = Math.round(saleAmount * gstPercentage) / 100;
+    return { ...item, quantity, rate, gstPercentage, gst, saleAmount, totalValue: Math.round((saleAmount + gst) * 100) / 100 };
+  });
+  if (preparedItems.some(item => !item.particular?.trim() || !allowedUoms.includes(item.uom) || !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.rate) || item.rate < 0 || !Number.isFinite(item.gstPercentage) || item.gstPercentage < 0 || item.gstPercentage > 100)) {
+    return res.status(400).json({ status: 'error', message: 'Each particular needs a name, valid UOM for the selected sales type, positive quantity, valid rate and GST percentage from 0 to 100' });
+  }
+
+  let connection;
+  try {
+    const bankDetails = await fetchPaymentDetailsFromBank(invoice_no.trim(), finance_year_id);
+    const date = formatDate(transaction_date);
+    const paymentDate = bankDetails ? formatDate(bankDetails.date_of_payment) : null;
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    const insertedIds = [];
+    for (const item of preparedItems) {
+      const [result] = await connection.query(`
+        INSERT INTO finance_sales_register (
+          transaction_date, customer_name, invoice_no, invoice_description,
+          rate, sale_amount, uom, quantity, gst, gst_percentage, total_value, supply, service,
+          date_of_payment, utr_details, po_work_order_no, finance_year_id, created_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        date, customer_name.trim(), invoice_no.trim(), item.particular.trim(),
+        item.rate, item.saleAmount, item.uom || null, item.quantity, item.gst, item.gstPercentage, item.totalValue,
+        sales_type === 'supply' ? 1 : 0, sales_type === 'service' ? 1 : 0,
+        paymentDate, bankDetails?.utr_details || null, bankDetails?.po_work_order_no || null,
+        finance_year_id, created_by
+      ]);
+      insertedIds.push(result.insertId);
+    }
+    await connection.commit();
+    res.status(201).json({
+      status: 'success',
+      message: 'Sales invoice created successfully',
+      data: { ids: insertedIds, item_count: insertedIds.length, bank_details_fetched: !!bankDetails }
+    });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Error creating sales invoice:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to create sales invoice' });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
 // Create Sales Register with auto-fetch from bank statement
 exports.createSalesRegister = async (req, res) => {
   try {
@@ -7478,5 +7778,268 @@ exports.deleteMaterialRegister = async (req, res) => {
       message: 'Internal server error',
       error: error.message
     });
+  }
+};
+
+const demMasterTypes = {
+  expense_classification: 'expense_classification',
+  expense_grouping: 'expense_grouping'
+};
+
+exports.getDemMasters = async (req, res) => {
+  try {
+    const [[costCenters], [costCategories], [classifications], [groupings]] = await Promise.all([
+      db.query('SELECT id, cost_center_name AS name FROM finance_cost_center WHERE is_active = 1 ORDER BY cost_center_name'),
+      db.query('SELECT id, category_name AS name FROM finance_cost_category ORDER BY category_name'),
+      db.query("SELECT id, master_value AS name FROM finance_dem_master WHERE master_type = 'expense_classification' ORDER BY master_value"),
+      db.query("SELECT id, master_value AS name FROM finance_dem_master WHERE master_type = 'expense_grouping' ORDER BY master_value")
+    ]);
+    res.json({ status: 'success', data: { costCenters, costCategories, classifications, groupings } });
+  } catch (error) {
+    console.error('Error fetching DEM masters:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch DEM masters' });
+  }
+};
+
+exports.createDemMaster = async (req, res) => {
+  const { type } = req.body;
+  const value = typeof req.body.value === 'string' ? req.body.value.trim() : '';
+  const createdBy = Number(req.body.created_by) || null;
+  if (!['cost_center', 'cost_category', ...Object.keys(demMasterTypes)].includes(type) || !value || value.length > 255) {
+    return res.status(400).json({ status: 'error', message: 'A valid master type and value (up to 255 characters) are required' });
+  }
+
+  try {
+    if (type === 'cost_center') {
+      const [result] = await db.query(
+        `INSERT INTO finance_cost_center (cost_center_name, created_by) VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+        [value, createdBy]
+      );
+      const [rows] = await db.query('SELECT id, cost_center_name AS name FROM finance_cost_center WHERE id = ?', [result.insertId]);
+      return res.json({ status: 'success', data: rows[0] });
+    }
+
+    if (type === 'cost_category') {
+      const [existing] = await db.query('SELECT id, category_name AS name FROM finance_cost_category WHERE LOWER(category_name) = LOWER(?) LIMIT 1', [value]);
+      if (existing.length) return res.json({ status: 'success', data: existing[0] });
+      const [result] = await db.query('INSERT INTO finance_cost_category (category_name) VALUES (?)', [value]);
+      return res.status(201).json({ status: 'success', data: { id: result.insertId, name: value } });
+    }
+
+    const masterType = demMasterTypes[type];
+    const [result] = await db.query(
+      `INSERT INTO finance_dem_master (master_type, master_value, created_by) VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+      [masterType, value, createdBy]
+    );
+    const [rows] = await db.query('SELECT id, master_value AS name FROM finance_dem_master WHERE id = ?', [result.insertId]);
+    res.status(201).json({ status: 'success', data: rows[0] });
+  } catch (error) {
+    console.error('Error creating DEM master:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to create DEM master' });
+  }
+};
+
+exports.getDemEntries = async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT e.id, e.entry_date, e.description, e.contra_entry, e.receipt_amount,
+        e.debit_amount, e.expense_month, e.available_balance,
+        TIMESTAMPDIFF(MICROSECOND, e.created_at, CURRENT_TIMESTAMP(3)) / 1000 AS age_milliseconds,
+        e.receipt_bank_id, rb.bank_name AS receipt_account,
+        e.paid_from_bank_id, fb.bank_name AS paid_from_account,
+        e.paid_to_bank_id, tb.bank_name AS paid_to_account,
+        e.cost_center_id, cc.cost_center_name AS cost_center,
+        e.cost_category_id, cat.category_name AS cost_category,
+        e.expense_classification_id, cls.master_value AS expense_classification,
+        e.expense_grouping_id, grp.master_value AS expense_grouping
+      FROM finance_dem_entry e
+      LEFT JOIN finance_bank_master rb ON rb.id = e.receipt_bank_id
+      LEFT JOIN finance_bank_master fb ON fb.id = e.paid_from_bank_id
+      LEFT JOIN finance_bank_master tb ON tb.id = e.paid_to_bank_id
+      LEFT JOIN finance_cost_center cc ON cc.id = e.cost_center_id
+      LEFT JOIN finance_cost_category cat ON cat.id = e.cost_category_id
+      LEFT JOIN finance_dem_master cls ON cls.id = e.expense_classification_id
+      LEFT JOIN finance_dem_master grp ON grp.id = e.expense_grouping_id
+      ORDER BY e.entry_date DESC, e.id DESC
+    `);
+    const [[balance]] = await db.query('SELECT COALESCE(SUM(available_balance), 0) AS total FROM finance_bank_master');
+    res.json({ status: 'success', data: { entries: rows, available_balance: Number(balance.total) || 0 } });
+  } catch (error) {
+    console.error('Error fetching DEM entries:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch DEM entries' });
+  }
+};
+
+exports.createDemEntry = async (req, res) => {
+  const {
+    entry_date, description, contra_entry = 'no', receipt_amount = 0, receipt_bank_id,
+    debit_amount = 0, paid_from_bank_id, paid_to_bank_id, expense_month,
+    cost_center_id, cost_category_id, expense_classification_id, expense_grouping_id, created_by
+  } = req.body;
+  const receipt = Number(receipt_amount);
+  const debit = Number(debit_amount);
+  if (!entry_date || !['yes', 'no'].includes(contra_entry) || !Number.isFinite(receipt) || !Number.isFinite(debit) || receipt < 0 || debit < 0 || receipt + debit <= 0) {
+    return res.status(400).json({ status: 'error', message: 'Enter a date and a valid receipt or debit amount' });
+  }
+  if ((receipt > 0 && !receipt_bank_id) || (debit > 0 && !paid_from_bank_id) || (contra_entry === 'yes' && !paid_to_bank_id)) {
+    return res.status(400).json({ status: 'error', message: 'Select the required bank account(s) for this entry' });
+  }
+
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    const bankIds = [...new Set([receipt > 0 ? Number(receipt_bank_id) : null, debit > 0 ? Number(paid_from_bank_id) : null, paid_to_bank_id ? Number(paid_to_bank_id) : null].filter(Boolean))].sort((a, b) => a - b);
+    const [banks] = await connection.query(
+      'SELECT id FROM finance_bank_master WHERE id IN (?) ORDER BY id FOR UPDATE',
+      [bankIds]
+    );
+    if (banks.length !== bankIds.length) {
+      await connection.rollback();
+      return res.status(400).json({ status: 'error', message: 'One or more selected bank accounts do not exist' });
+    }
+
+    const changes = new Map();
+    if (receipt > 0) changes.set(Number(receipt_bank_id), (changes.get(Number(receipt_bank_id)) || 0) + receipt);
+    if (debit > 0) changes.set(Number(paid_from_bank_id), (changes.get(Number(paid_from_bank_id)) || 0) - debit);
+    if (debit > 0 && contra_entry === 'yes') {
+      changes.set(Number(paid_to_bank_id), (changes.get(Number(paid_to_bank_id)) || 0) + debit);
+    }
+    for (const [bankId, delta] of changes) {
+      await connection.query('UPDATE finance_bank_master SET available_balance = COALESCE(available_balance, 0) + ? WHERE id = ?', [delta, bankId]);
+    }
+    const [[totalBalance]] = await connection.query('SELECT COALESCE(SUM(available_balance), 0) AS total FROM finance_bank_master');
+    const [result] = await connection.query(`
+      INSERT INTO finance_dem_entry (
+        entry_date, description, contra_entry, receipt_amount, receipt_bank_id,
+        debit_amount, paid_from_bank_id, paid_to_bank_id, expense_month,
+        cost_center_id, cost_category_id, expense_classification_id, expense_grouping_id,
+        available_balance, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      entry_date, description || null, contra_entry, receipt, receipt_bank_id || null,
+      debit, paid_from_bank_id || null, paid_to_bank_id || null, expense_month || null,
+      cost_center_id || null, cost_category_id || null, expense_classification_id || null,
+      expense_grouping_id || null, totalBalance.total, Number(created_by) || null
+    ]);
+    await connection.commit();
+    res.status(201).json({ status: 'success', message: 'DEM entry saved', data: { id: result.insertId, available_balance: Number(totalBalance.total) || 0 } });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Error creating DEM entry:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to save DEM entry' });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+exports.updateDemEntry = async (req, res) => {
+  const entryId = Number(req.params.id);
+  const {
+    entry_date, description, contra_entry = 'no', receipt_amount = 0, receipt_bank_id,
+    debit_amount = 0, paid_from_bank_id, paid_to_bank_id, expense_month,
+    cost_center_id, cost_category_id, expense_classification_id, expense_grouping_id
+  } = req.body;
+  const receipt = Number(receipt_amount);
+  const debit = Number(debit_amount);
+  if (!Number.isInteger(entryId) || entryId <= 0 || !entry_date || !['yes', 'no'].includes(contra_entry) || !Number.isFinite(receipt) || !Number.isFinite(debit) || receipt < 0 || debit < 0 || receipt + debit <= 0) {
+    return res.status(400).json({ status: 'error', message: 'Enter a date and a valid receipt or debit amount' });
+  }
+  if ((receipt > 0 && !receipt_bank_id) || (debit > 0 && !paid_from_bank_id) || (contra_entry === 'yes' && !paid_to_bank_id)) {
+    return res.status(400).json({ status: 'error', message: 'Select the required bank account(s) for this entry' });
+  }
+
+  const movementChanges = (entry, multiplier) => {
+    const changes = new Map();
+    const add = (bankId, amount) => {
+      if (bankId && amount) changes.set(Number(bankId), (changes.get(Number(bankId)) || 0) + amount * multiplier);
+    };
+    add(entry.receipt_bank_id, Number(entry.receipt_amount) || 0);
+    add(entry.paid_from_bank_id, -(Number(entry.debit_amount) || 0));
+    if (entry.contra_entry === 'yes') add(entry.paid_to_bank_id, Number(entry.debit_amount) || 0);
+    return changes;
+  };
+
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    const [existingRows] = await connection.query(
+      `SELECT *, created_at > DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE) AS edit_window_open
+       FROM finance_dem_entry WHERE id = ? FOR UPDATE`,
+      [entryId]
+    );
+    if (!existingRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ status: 'error', message: 'DEM entry not found' });
+    }
+    const previous = existingRows[0];
+    if (!previous.edit_window_open) {
+      await connection.rollback();
+      return res.status(403).json({ status: 'error', message: 'DEM entries can only be edited within 2 minutes of creation' });
+    }
+    const next = {
+      entry_date, description: description || null, contra_entry, receipt_amount: receipt,
+      receipt_bank_id: receipt_bank_id || null, debit_amount: debit,
+      paid_from_bank_id: paid_from_bank_id || null, paid_to_bank_id: paid_to_bank_id || null,
+      expense_month: expense_month || null, cost_center_id: cost_center_id || null,
+      cost_category_id: cost_category_id || null, expense_classification_id: expense_classification_id || null,
+      expense_grouping_id: expense_grouping_id || null
+    };
+    const changes = movementChanges(previous, -1);
+    for (const [bankId, delta] of movementChanges(next, 1)) {
+      changes.set(bankId, (changes.get(bankId) || 0) + delta);
+    }
+    const bankIds = [...changes.keys()].sort((a, b) => a - b);
+    const [banks] = await connection.query('SELECT id FROM finance_bank_master WHERE id IN (?) ORDER BY id FOR UPDATE', [bankIds]);
+    if (banks.length !== bankIds.length) {
+      await connection.rollback();
+      return res.status(400).json({ status: 'error', message: 'One or more selected bank accounts do not exist' });
+    }
+
+    await connection.query(
+      'INSERT INTO finance_dem_entry_edit_history (finance_dem_entry_id, previous_values, changed_by) VALUES (?, ?, ?)',
+      [entryId, JSON.stringify(previous), Number(req.purchaseUser?.user_id || req.purchaseUser?.id) || null]
+    );
+    for (const [bankId, delta] of changes) {
+      await connection.query('UPDATE finance_bank_master SET available_balance = COALESCE(available_balance, 0) + ? WHERE id = ?', [delta, bankId]);
+    }
+    const [[totalBalance]] = await connection.query('SELECT COALESCE(SUM(available_balance), 0) AS total FROM finance_bank_master');
+    await connection.query(`
+      UPDATE finance_dem_entry SET
+        entry_date = ?, description = ?, contra_entry = ?, receipt_amount = ?, receipt_bank_id = ?,
+        debit_amount = ?, paid_from_bank_id = ?, paid_to_bank_id = ?, expense_month = ?,
+        cost_center_id = ?, cost_category_id = ?, expense_classification_id = ?, expense_grouping_id = ?,
+        available_balance = ?
+      WHERE id = ?
+    `, [
+      next.entry_date, next.description, next.contra_entry, next.receipt_amount, next.receipt_bank_id,
+      next.debit_amount, next.paid_from_bank_id, next.paid_to_bank_id, next.expense_month,
+      next.cost_center_id, next.cost_category_id, next.expense_classification_id, next.expense_grouping_id,
+      totalBalance.total, entryId
+    ]);
+    await connection.commit();
+    res.json({ status: 'success', message: 'DEM entry updated and previous values tracked' });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Error updating DEM entry:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to update DEM entry' });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+exports.getDemEntryHistory = async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      'SELECT id, finance_dem_entry_id, previous_values, changed_by, changed_at FROM finance_dem_entry_edit_history WHERE finance_dem_entry_id = ? ORDER BY changed_at DESC, id DESC',
+      [req.params.id]
+    );
+    res.json({ status: 'success', data: rows });
+  } catch (error) {
+    console.error('Error fetching DEM edit history:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch DEM edit history' });
   }
 };

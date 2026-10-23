@@ -213,6 +213,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
+import ResetPassword from './pages/ResetPassword';
 import ProtectedRoute from './components/ProtectedRoute';
 
 // === Existing Pages ===
@@ -250,10 +251,13 @@ import SiteInchargeHistory from './pages/site-incharge/SiteInchargeHistory';
 
 // === FINANCE PAGES - UPDATED ===
 import BankStatementConsolidation from './components/FinanceComponents/New/BankStatementConsolidation';
+import BankDetails from './components/FinanceComponents/New/BankDetails';
 import PurchaseRegister from './components/FinanceComponents/New/PurchaseRegister';
+import PurchaseRegisterGrid from './components/FinanceComponents/New/PurchaseRegisterGrid';
 import PurchaseRegisterWithoutGST from './components/FinanceComponents/New/PurchaseRegisterWithoutGST';
-import SalesRegister from './components/FinanceComponents/New/SalesRegister';
+import SalesRegister from './components/FinanceComponents/New/SalesRegisterGrid';
 import MaterialRegister from './components/FinanceComponents/New/MaterialRegister';
+import DemEntries from './components/FinanceComponents/New/DEM';
 
 // === RESOURCE PAGES ===
 import EmployeeDetails from './pages/contract/EmployeeDetails';
@@ -286,6 +290,7 @@ const App = () => {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Login />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
 
         <Route element={<AppLayout />}>
           {/* Redirect short paths */}
@@ -306,6 +311,10 @@ const App = () => {
             element={<ProtectedRoute roles={['admin', 'superadmin', 'accounts_team']}><RedirectToFinanceBankStatement /></ProtectedRoute>}
           />
 
+          <Route
+            path="/:rolePrefix/finance/bank-details/:encodedUserId"
+            element={<ProtectedRoute roles={['admin', 'superadmin', 'accounts_team', 'managing_director']}><BankDetails /></ProtectedRoute>}
+          />
           <Route 
             path="/:rolePrefix/finance/bank-statement-consolidation/:encodedUserId" 
             element={<ProtectedRoute roles={['admin', 'superadmin', 'accounts_team']}><BankStatementConsolidation /></ProtectedRoute>} 
@@ -313,6 +322,10 @@ const App = () => {
           <Route 
             path="/:rolePrefix/finance/purchase-register/:encodedUserId" 
             element={<ProtectedRoute roles={['admin', 'superadmin', 'accounts_team']}><PurchaseRegister /></ProtectedRoute>} 
+          />
+          <Route
+            path="/:rolePrefix/finance/purchase-register-new/:encodedUserId"
+            element={<ProtectedRoute roles={['admin', 'superadmin', 'accounts_team']}><PurchaseRegisterGrid /></ProtectedRoute>}
           />
           <Route
             path="/:rolePrefix/finance/purchase-register-without-gst/:encodedUserId"
@@ -325,6 +338,10 @@ const App = () => {
           <Route 
             path="/:rolePrefix/finance/material-register/:encodedUserId" 
             element={<ProtectedRoute roles={['admin', 'superadmin', 'accounts_team']}><MaterialRegister /></ProtectedRoute>} 
+          />
+          <Route
+            path="/:rolePrefix/finance/dem/:encodedUserId"
+            element={<ProtectedRoute roles={['admin', 'superadmin', 'accounts_team']}><DemEntries /></ProtectedRoute>}
           />
 
           {/* ====================== CONTRACTS ====================== */}

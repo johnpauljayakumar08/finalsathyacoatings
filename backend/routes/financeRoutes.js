@@ -109,8 +109,36 @@ router.get("/uoms", financeController.getUoms);
 
 // Bank Master Routes (CORRECT & SAFE)
 router.get("/bank-masters", financeController.getBankMasters);
-router.post("/create-bank-master", financeController.createBankMaster);
-router.put("/update-bank-master", financeController.updateBankMaster); 
+router.get(
+  "/bank-details",
+  purchaseRegisterAuth.authenticate,
+  purchaseRegisterAuth.authorize(['admin', 'superadmin', 'accounts_team', 'managing_director']),
+  financeController.getBankDetails
+);
+router.post(
+  "/bank-details",
+  purchaseRegisterAuth.authenticate,
+  purchaseRegisterAuth.authorize(['managing_director']),
+  financeController.createBankDetails
+);
+router.put(
+  "/bank-details/:id",
+  purchaseRegisterAuth.authenticate,
+  purchaseRegisterAuth.authorize(['managing_director']),
+  financeController.updateBankDetails
+);
+router.post(
+  "/create-bank-master",
+  purchaseRegisterAuth.authenticate,
+  purchaseRegisterAuth.authorize(['managing_director']),
+  financeController.createBankMaster
+);
+router.put(
+  "/update-bank-master",
+  purchaseRegisterAuth.authenticate,
+  purchaseRegisterAuth.authorize(['managing_director']),
+  financeController.updateBankMaster
+);
 
 // CFS → Salary Payable - All Records (No Query Params)
 router.get("/cfs-data", financeController.fetchCFSdata);
@@ -129,11 +157,27 @@ router.get("/custom-payments-by-category", financeController.getCustomPaymentsBy
 router.get("/all-custom-payments", financeController.getAllCustomPayments);
 router.get("/salary-payable-transactions", financeController.getSalaryPayableTransactions);
 
+router.get("/compound-purchase-entries", financeController.getCompoundPurchaseEntries);
+router.post("/compound-purchase-entries", financeController.createCompoundPurchaseEntry);
+
 
 // Paid & Received Details
 router.get("/paid-received-details", financeController.getPaidReceivedDetails);
 
 router.get("/bank-history/:id", financeController.getBankHistory);
+
+// DEM (Daily Expense Management) entries
+router.get("/dem/masters", financeController.getDemMasters);
+router.post("/dem/masters", financeController.createDemMaster);
+router.get("/dem/entries", financeController.getDemEntries);
+router.post("/dem/entries", financeController.createDemEntry);
+router.put(
+  "/dem/entries/:id",
+  purchaseRegisterAuth.authenticate,
+  purchaseRegisterAuth.authorize(['admin', 'superadmin']),
+  financeController.updateDemEntry
+);
+router.get("/dem/entries/:id/history", financeController.getDemEntryHistory);
 
 router.get("/paid-received-detailed", financeController.getPaidReceivedDetailed);
 
@@ -210,6 +254,7 @@ router.delete(
 );
 
 // ==================== SALES REGISTER ROUTES ====================
+router.post("/create-sales-invoice", financeController.createSalesInvoice);
 router.post("/create-sales-register", financeController.createSalesRegister);
 router.get("/sales-registers", financeController.getSalesRegisters);
 router.get("/sales-registers/:id", financeController.getSalesRegisterById);

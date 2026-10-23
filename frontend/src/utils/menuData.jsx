@@ -391,20 +391,20 @@ const getSidebarConfig = (role, encodedUserId) => {
         title: 'Finance Management',
         icon: IndianRupee,
         items: [
-          { 
-            label: 'Bank Statement Consolidation', 
-            to: `/${prefix}/finance/bank-statement-consolidation/${encodedUserId}`, 
-            icon: FileSpreadsheet 
+          {
+            label: 'Bank Details',
+            to: `/${prefix}/finance/bank-details/${encodedUserId}`,
+            icon: Landmark
           },
-          { 
-            label: 'Purchase Register - G (with GST)', 
-            to: `/${prefix}/finance/purchase-register/${encodedUserId}`, 
-            icon: Receipt 
+          {
+            label: 'DEM',
+            to: `/${prefix}/finance/dem/${encodedUserId}`,
+            icon: BanknoteArrowDown
           },
-          { 
-            label: 'Purchase Register - WG (without GST)', 
-            to: `/${prefix}/finance/purchase-register-without-gst/${encodedUserId}`, 
-            icon: Receipt 
+          {
+            label: 'Purchase Register',
+            to: `/${prefix}/finance/purchase-register-new/${encodedUserId}`,
+            icon: Receipt
           },
           { 
             label: 'Sales Register', 

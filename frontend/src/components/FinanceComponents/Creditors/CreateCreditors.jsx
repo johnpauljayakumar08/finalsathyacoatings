@@ -416,6 +416,9 @@ const labelStyle = 'block text-sm font-semibold mb-2';
 const sectionStyle = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6';
 
 const CreateCreditors = ({ onSuccess }) => {
+  const user = JSON.parse(sessionStorage.getItem('user') || '{}');
+  const canManageBanks = ['md', 'managing_director', 'managingdirector']
+    .includes(String(user.role || '').replace(/[\s-]/g, '').toLowerCase());
   const [clients, setClients] = useState([]);
   const [banks, setBanks] = useState([]);
   const [clientInputValue, setClientInputValue] = useState('');
@@ -523,7 +526,7 @@ const CreateCreditors = ({ onSuccess }) => {
 
   const handleBankInputChange = (input) => {
     setBankInputValue(input);
-    setShowAddBank(!!input && !banks.some(b => b.label.toLowerCase().includes(input.toLowerCase())));
+    setShowAddBank(canManageBanks && !!input && !banks.some(b => b.label.toLowerCase().includes(input.toLowerCase())));
   };
 
   const handleBankChange = async (option) => {
@@ -535,6 +538,8 @@ const CreateCreditors = ({ onSuccess }) => {
           bank_name: name,
           available_balance: 0,
           created_by: createdBy || 1
+        }, {
+          headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
         });
         const newBank = { value: res.data.data.id, label: `${name} (₹0.00)` };
         setBanks(prev => [...prev, newBank]);
@@ -600,7 +605,7 @@ const CreateCreditors = ({ onSuccess }) => {
 
   const bankOptions = [
     ...banks,
-    ...(showAddBank ? [{ value: 'add-bank', label: `Add Bank "${bankInputValue}"` }] : [])
+    ...(canManageBanks && showAddBank ? [{ value: 'add-bank', label: `Add Bank "${bankInputValue}"` }] : [])
   ];
 
   const customSelectStyles = {

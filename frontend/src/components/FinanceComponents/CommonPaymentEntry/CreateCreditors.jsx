@@ -224,6 +224,9 @@ const inputStyle = {
 const labelStyle = 'block text-sm font-semibold mb-2';
 
 const CreateCreditors = ({ createdBy, onSuccess, onCancel }) => {
+  const user = JSON.parse(sessionStorage.getItem('user') || '{}');
+  const canManageBanks = ['md', 'managing_director', 'managingdirector']
+    .includes(String(user.role || '').replace(/[\s-]/g, '').toLowerCase());
   const [clients, setClients] = useState([]);
   const [banks, setBanks] = useState([]);
   const [clientInputValue, setClientInputValue] = useState('');
@@ -308,7 +311,10 @@ const CreateCreditors = ({ createdBy, onSuccess, onCancel }) => {
   };
 
   const clientOptions = [...clients, ...(showAddClient ? [{ value: 'add', label: `Add "${clientInputValue}"` }] : [])];
-  const bankOptions = [...banks, ...(showAddBank ? [{ value: 'add-bank', label: `Add Bank "${bankInputValue}"` }] : [])];
+  const bankOptions = [
+    ...banks,
+    ...(canManageBanks && showAddBank ? [{ value: 'add-bank', label: `Add Bank "${bankInputValue}"` }] : [])
+  ];
 
   // Dynamic invoice options including "Add new" if applicable
   const invoiceSelectOptions = [
@@ -354,7 +360,7 @@ const CreateCreditors = ({ createdBy, onSuccess, onCancel }) => {
           options={bankOptions}
           onInputChange={(v) => {
             setBankInputValue(v);
-            setShowAddBank(!!v && !banks.some(b => b.label.toLowerCase().includes(v.toLowerCase())));
+            setShowAddBank(canManageBanks && !!v && !banks.some(b => b.label.toLowerCase().includes(v.toLowerCase())));
           }}
           onChange={async (opt) => {
             if (opt?.value === 'add-bank') {
@@ -365,6 +371,8 @@ const CreateCreditors = ({ createdBy, onSuccess, onCancel }) => {
                   bank_name: name,
                   available_balance: 0,
                   created_by: createdBy || 1
+                }, {
+                  headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
                 });
                 const newBank = { value: res.data.data.id, label: `${name} (₹0.00)` };
                 setBanks(prev => [...prev, newBank]);
