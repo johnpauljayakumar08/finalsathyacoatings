@@ -6,7 +6,7 @@ const db = require("../config/db");
 const authModel = require("../models/authModel");
 
 const normalizeRole = role => String(role || '').replace(/[\s_-]/g, '').toLowerCase();
-const isManagingDirector = role => ['md', 'managingdirector'].includes(normalizeRole(role));
+const requiresLoginOtp = role => ['admin', 'md', 'managingdirector'].includes(normalizeRole(role));
 
 const createLoginSession = user => {
   const token = jwt.sign(
@@ -35,9 +35,10 @@ const createOtpDigest = (challengeId, otp) => crypto
   .digest('hex');
 
 const sendManagingDirectorOtp = async user => {
-  const { SMTP_HOST, SMTP_USER, SMTP_PASS, MD_OTP_EMAIL } = process.env;
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS || !MD_OTP_EMAIL) {
-    const error = new Error('Managing Director OTP email is not configured');
+  const { SMTP_HOST, SMTP_USER, SMTP_PASS } = process.env;
+  const recipient = normalizeRole(user.role_name) === 'admin' ? process.env.ADMIN_OTP_EMAIL : process.env.MD_OTP_EMAIL;
+  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS || !recipient) {
+    const error = new Error('Admin/MD OTP email is not configured');
     error.statusCode = 503;
     throw error;
   }
@@ -73,8 +74,8 @@ const sendManagingDirectorOtp = async user => {
     });
     await transporter.sendMail({
       from: process.env.MAIL_FROM || SMTP_USER,
-      to: MD_OTP_EMAIL,
-      subject: 'Sathya Coatings Managing Director login code',
+      to: recipient,
+      subject: 'Sathya Coatings login code',
       text: `Your login code is ${otp}. It expires in 5 minutes. If you did not try to sign in, ignore this email.`,
       html: `<p>Your Sathya Coatings login code is:</p><p style="font-size:24px;font-weight:bold;letter-spacing:4px">${otp}</p><p>This code expires in 5 minutes. If you did not try to sign in, ignore this email.</p>`
     });
@@ -108,9 +109,9 @@ exports.login = async (req, res) => {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
-    if (isManagingDirector(user.role_name)) {
+    if (requiresLoginOtp(user.role_name)) {
       const challengeId = await sendManagingDirectorOtp(user);
-      return res.status(200).json({ requiresOtp: true, challengeId, message: 'A login code has been sent to the Managing Director mailbox.' });
+      return res.status(200).json({ requiresOtp: true, challengeId, message: 'A login code has been sent to your configured login email.' });
     }
 
     res.status(200).json(createLoginSession(user));
@@ -160,7 +161,7 @@ exports.verifyManagingDirectorOtp = async (req, res) => {
        FROM users u JOIN roles r ON u.role_id = r.role_id WHERE u.user_id = ?`,
       [challenge.user_id]
     );
-    if (!users.length || !isManagingDirector(users[0].role_name)) {
+    if (!users.length || !requiresLoginOtp(users[0].role_name)) {
       await connection.query('UPDATE md_login_otp_challenges SET used_at = CURRENT_TIMESTAMP WHERE id = ?', [challenge.id]);
       await connection.commit();
       return res.status(400).json({ error: 'Unable to verify this login. Sign in again.' });

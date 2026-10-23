@@ -37,7 +37,7 @@ const Login = () => {
 
       if (response.data.requiresOtp) {
         setOtpChallengeId(response.data.challengeId);
-        toast.info(response.data.message || 'A login code was sent to the Managing Director mailbox.');
+        toast.info(response.data.message || 'A login code was sent to your configured login email.');
         return;
       }
       await completeLogin(response.data);
@@ -104,7 +104,7 @@ const Login = () => {
           <button type="submit" disabled={loading} className="w-full rounded-md bg-[#1e7a6f] px-4 py-2 text-white hover:bg-[#114740] disabled:opacity-60">{loading ? 'Sending...' : 'Send reset link'}</button>
           <button type="button" onClick={() => setForgotPassword(false)} className="w-full py-2 text-sm text-[#1e7a6f] hover:underline">Back to sign in</button>
         </form> : otpChallengeId ? <form onSubmit={handleVerifyOtp} className="space-y-4">
-          <p className="text-sm text-gray-600">Enter the six-digit code sent to the Managing Director login email. The code expires in five minutes.</p>
+          <p className="text-sm text-gray-600">Enter the six-digit code sent to your configured login email. The code expires in five minutes.</p>
           <label htmlFor="login-otp" className="block text-sm font-medium text-gray-700">One-time password</label>
           <input id="login-otp" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={otp} onChange={event => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 tracking-[0.3em]" placeholder="000000" />
           <button type="submit" disabled={loading || otp.length !== 6} className="w-full rounded-md bg-[#1e7a6f] px-4 py-2 text-white hover:bg-[#114740] disabled:opacity-60">{loading ? 'Verifying...' : 'Verify and sign in'}</button>
