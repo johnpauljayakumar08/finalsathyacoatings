@@ -2,7 +2,7 @@ import { API_BASE_URL } from "../../config/api.js";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import Select from "react-select";
-import { FileText, Save, HardHat, Pencil, X } from "lucide-react";
+import { FileText, Save, HardHat, Pencil, Plus, X } from "lucide-react";
 import { ToastContainer, toast } from "react-toastify";
 import { useParams } from "react-router-dom";
 
@@ -33,7 +33,7 @@ const WorkAndMaterialEntry = () => {
   const [budgetHeads, setBudgetHeads] = useState([]);
   const [budgetExpenseData, setBudgetExpenseData] = useState({});
   const [budgetExpenseInputs, setBudgetExpenseInputs] = useState({});
-  const [budgetExpenseEditIds, setBudgetExpenseEditIds] = useState({});
+  const [budgetExpenseForms, setBudgetExpenseForms] = useState({});
   const [loading, setLoading] = useState(false);
   const [savingWork, setSavingWork] = useState(false);
   const [savingMaterials, setSavingMaterials] = useState(false);
@@ -42,7 +42,7 @@ const WorkAndMaterialEntry = () => {
 
   useEffect(() => {
     setBudgetExpenseInputs({});
-    setBudgetExpenseEditIds({});
+    setBudgetExpenseForms({});
   }, [selectedDate, selectedSite?.value, selectedWorkDescription?.value]);
 
   useEffect(() => {
@@ -510,18 +510,37 @@ const WorkAndMaterialEntry = () => {
     }
   };
 
-  const updateBudgetExpenseInput = (budgetId, field, value) => {
+  const getBudgetExpenseFormKey = (budgetId, formId) => `${budgetId}:${formId}`;
+
+  const updateBudgetExpenseInput = (budgetId, formId, field, value) => {
+    const formKey = getBudgetExpenseFormKey(budgetId, formId);
     setBudgetExpenseInputs(previous => ({
       ...previous,
-      [budgetId]: { ...previous[budgetId], [field]: value }
+      [formKey]: { ...previous[formKey], [field]: value }
+    }));
+  };
+
+  const addBudgetExpenseItem = (budgetId) => {
+    const formId = `new-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setBudgetExpenseForms(previous => ({
+      ...previous,
+      [budgetId]: [...(previous[budgetId] || [{ id: "new" }]), { id: formId }]
     }));
   };
 
   const editBudgetExpenseEntry = (budgetId, entry) => {
-    setBudgetExpenseEditIds(previous => ({ ...previous, [budgetId]: entry.id }));
+    const formId = `edit-${entry.id}`;
+    const formKey = getBudgetExpenseFormKey(budgetId, formId);
+    setBudgetExpenseForms(previous => ({
+      ...previous,
+      [budgetId]: [
+        ...(previous[budgetId] || [{ id: "new" }]).filter(form => form.entryId !== entry.id),
+        { id: formId, entryId: entry.id }
+      ]
+    }));
     setBudgetExpenseInputs(previous => ({
       ...previous,
-      [budgetId]: {
+      [formKey]: {
         item_description: entry.item_description || "",
         uom: entry.uom || "",
         quantity: entry.quantity ?? "",
@@ -530,29 +549,29 @@ const WorkAndMaterialEntry = () => {
     }));
   };
 
-  const cancelBudgetExpenseEdit = (budgetId) => {
-    setBudgetExpenseEditIds(previous => {
-      const next = { ...previous };
-      delete next[budgetId];
-      return next;
-    });
+  const cancelBudgetExpenseEdit = (budgetId, formId) => {
+    const formKey = getBudgetExpenseFormKey(budgetId, formId);
+    setBudgetExpenseForms(previous => ({
+      ...previous,
+      [budgetId]: (previous[budgetId] || []).filter(form => form.id !== formId)
+    }));
     setBudgetExpenseInputs(previous => {
       const next = { ...previous };
-      delete next[budgetId];
+      delete next[formKey];
       return next;
     });
   };
 
-  const saveBudgetExpenseEntry = async (budget) => {
-    const editingEntryId = budgetExpenseEditIds[budget.id];
-    const existing = budgetExpenseData[budget.id]?.entries?.find(
-      entry => String(entry.id) === String(editingEntryId)
+  const saveBudgetExpenseEntry = async (budget, form) => {
+    const existing = budgetExpenseData[budget.id]?.entries?.find(entry =>
+      String(entry.id) === String(form.entryId)
     );
     if (existing && !existing.is_editable) {
       toast.error("This budget expense is outside the 48-hour edit window");
       return;
     }
-    const input = budgetExpenseInputs[budget.id] || {};
+    const formKey = getBudgetExpenseFormKey(budget.id, form.id);
+    const input = budgetExpenseInputs[formKey] || {};
     const description = String(input.item_description ?? existing?.item_description ?? "").trim();
     const uom = String(input.uom ?? existing?.uom ?? "").trim();
     const quantity = Number(input.quantity ?? existing?.quantity);
@@ -595,10 +614,13 @@ const WorkAndMaterialEntry = () => {
         params: { actual_budget_id: budget.id, date: selectedDate }
       });
       setBudgetExpenseData(previous => ({ ...previous, [budget.id]: response.data.data }));
-      setBudgetExpenseInputs(previous => ({ ...previous, [budget.id]: {} }));
-      setBudgetExpenseEditIds(previous => {
+      setBudgetExpenseForms(previous => ({
+        ...previous,
+        [budget.id]: (previous[budget.id] || []).filter(item => item.id !== form.id)
+      }));
+      setBudgetExpenseInputs(previous => {
         const next = { ...previous };
-        delete next[budget.id];
+        delete next[formKey];
         return next;
       });
       toast.success(response.data.message || "Budget expense saved");
@@ -831,20 +853,7 @@ const WorkAndMaterialEntry = () => {
                   {budgetHeads.map(budget => {
                     const details = budgetExpenseData[budget.id] || {};
                     const entries = details.entries || [];
-                    const editingEntryId = budgetExpenseEditIds[budget.id];
-                    const existing = entries.find(entry => String(entry.id) === String(editingEntryId));
-                    const input = budgetExpenseInputs[budget.id] || {};
-                    const description = input.item_description ?? existing?.item_description ?? "";
-                    const uom = input.uom ?? existing?.uom ?? "";
-                    const quantity = input.quantity ?? (existing?.quantity ?? "");
-                    const rate = input.rate ?? (existing?.rate ?? "");
-                    const quantityNumber = Number(quantity);
-                    const rateNumber = Number(rate);
-                    const calculatedValue = Number.isFinite(quantityNumber) && quantityNumber > 0 &&
-                      Number.isFinite(rateNumber) && rateNumber >= 0
-                      ? Number((quantityNumber * rateNumber).toFixed(2))
-                      : null;
-                    const canEdit = !existing || existing.is_editable;
+                    const forms = budgetExpenseForms[budget.id] ?? [{ id: "new" }];
 
                     return (
                       <article key={budget.id} className="rounded-lg border border-gray-200 p-4">
@@ -856,6 +865,15 @@ const WorkAndMaterialEntry = () => {
                               {" · "}Spent to date: ₹{(Number(details.cumulative?.actual_value) || 0).toFixed(2)}
                             </p>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => addBudgetExpenseItem(budget.id)}
+                            disabled={savingBudgetExpense}
+                            className="inline-flex items-center gap-2 rounded-md border border-indigo-200 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+                          >
+                            <Plus size={16} />
+                            Add item
+                          </button>
                         </div>
 
                         {entries.length > 0 && (
@@ -891,13 +909,30 @@ const WorkAndMaterialEntry = () => {
                           </div>
                         )}
 
-                        {existing && (
-                          <div className="mb-3 text-sm font-medium text-indigo-700">
-                            Editing saved expense. Save changes or cancel to add another line.
-                          </div>
-                        )}
+                        {forms.map(form => {
+                          const existing = entries.find(entry => String(entry.id) === String(form.entryId));
+                          const formKey = getBudgetExpenseFormKey(budget.id, form.id);
+                          const input = budgetExpenseInputs[formKey] || {};
+                          const description = input.item_description ?? existing?.item_description ?? "";
+                          const uom = input.uom ?? existing?.uom ?? "";
+                          const quantity = input.quantity ?? (existing?.quantity ?? "");
+                          const rate = input.rate ?? (existing?.rate ?? "");
+                          const quantityNumber = Number(quantity);
+                          const rateNumber = Number(rate);
+                          const calculatedValue = Number.isFinite(quantityNumber) && quantityNumber > 0 &&
+                            Number.isFinite(rateNumber) && rateNumber >= 0
+                            ? Number((quantityNumber * rateNumber).toFixed(2))
+                            : null;
+                          const canEdit = !existing || existing.is_editable;
 
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                          return (
+                            <div key={form.id} className="mt-4 rounded-md border border-gray-200 p-3">
+                              {existing && (
+                                <div className="mb-3 text-sm font-medium text-indigo-700">
+                                  Editing saved expense
+                                </div>
+                              )}
+                              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
                           <label className="text-xs font-medium text-gray-600 lg:col-span-2">
                             Description
                             <input
@@ -905,7 +940,7 @@ const WorkAndMaterialEntry = () => {
                               maxLength={255}
                               value={description}
                               disabled={!canEdit}
-                              onChange={event => updateBudgetExpenseInput(budget.id, "item_description", event.target.value)}
+                              onChange={event => updateBudgetExpenseInput(budget.id, form.id, "item_description", event.target.value)}
                               placeholder="Expense description"
                               className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
                             />
@@ -917,7 +952,7 @@ const WorkAndMaterialEntry = () => {
                               maxLength={50}
                               value={uom}
                               disabled={!canEdit}
-                              onChange={event => updateBudgetExpenseInput(budget.id, "uom", event.target.value)}
+                              onChange={event => updateBudgetExpenseInput(budget.id, form.id, "uom", event.target.value)}
                               placeholder="e.g. Nos, Ltr"
                               className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
                             />
@@ -930,7 +965,7 @@ const WorkAndMaterialEntry = () => {
                               step="0.001"
                               value={quantity}
                               disabled={!canEdit}
-                              onChange={event => updateBudgetExpenseInput(budget.id, "quantity", event.target.value)}
+                              onChange={event => updateBudgetExpenseInput(budget.id, form.id, "quantity", event.target.value)}
                               placeholder="Qty"
                               className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
                             />
@@ -944,7 +979,7 @@ const WorkAndMaterialEntry = () => {
                                 step="0.01"
                                 value={rate}
                                 disabled={!canEdit}
-                                onChange={event => updateBudgetExpenseInput(budget.id, "rate", event.target.value)}
+                                onChange={event => updateBudgetExpenseInput(budget.id, form.id, "rate", event.target.value)}
                                 placeholder="Rate"
                                 className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
                               />
@@ -962,7 +997,7 @@ const WorkAndMaterialEntry = () => {
                           {existing && (
                             <button
                               type="button"
-                              onClick={() => cancelBudgetExpenseEdit(budget.id)}
+                              onClick={() => cancelBudgetExpenseEdit(budget.id, form.id)}
                               disabled={savingBudgetExpense}
                               className="mr-2 inline-flex items-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                             >
@@ -972,7 +1007,7 @@ const WorkAndMaterialEntry = () => {
                           )}
                           <button
                             type="button"
-                            onClick={() => saveBudgetExpenseEntry(budget)}
+                            onClick={() => saveBudgetExpenseEntry(budget, form)}
                             disabled={savingBudgetExpense || !canEdit}
                             className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                           >
@@ -980,6 +1015,9 @@ const WorkAndMaterialEntry = () => {
                             {savingBudgetExpense ? "Saving expense..." : existing ? "Update expense" : "Save expense"}
                           </button>
                         </div>
+                            </div>
+                          );
+                        })}
                       </article>
                     );
                   })}
