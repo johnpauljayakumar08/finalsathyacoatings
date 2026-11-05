@@ -4,7 +4,7 @@ import axios from "axios";
 import Select from "react-select";
 import CreatableSelect from "react-select/creatable";
 import Swal from "sweetalert2";
-import { Plus, PlusCircle, Trash2, Loader2, ChevronDown, ChevronUp, CheckCircle, AlertCircle, Edit2 } from "lucide-react";
+import { Plus, PlusCircle, Trash2, Loader2, ChevronDown, ChevronUp, CheckCircle, AlertCircle, Edit2, History, X, Save } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { useParams } from "react-router-dom";
 
@@ -76,6 +76,13 @@ const ProjectProjectionNew = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingAssignment, setEditingAssignment] = useState(null);
   const [activeMaterialProjId, setActiveMaterialProjId] = useState(null);
+  const [allocationEditTarget, setAllocationEditTarget] = useState(null);
+  const [allocationEditValue, setAllocationEditValue] = useState("");
+  const [allocationSaving, setAllocationSaving] = useState(false);
+  const [allocationHistoryTarget, setAllocationHistoryTarget] = useState(null);
+  const [allocationHistory, setAllocationHistory] = useState([]);
+  const [allocationHistoryLoading, setAllocationHistoryLoading] = useState(false);
+  const [allocationHistoryError, setAllocationHistoryError] = useState("");
   // Memoized chart data (updated: use last projection's budgetValue only, no + prevRem)
   const lastProjection = useMemo(() => projections[projections.length - 1], [projections]);
   const effectiveBudgetValue = useMemo(() => {
@@ -1049,6 +1056,86 @@ const canAddProjection = useMemo(() => {
       setIsAllocated(false);
     }
   }, []);
+  const saveProjectionAllocation = useCallback(async () => {
+    if (!allocationEditTarget || !selectedSite?.value || !selectedWorkDescription?.value) return;
+    const newCost = Number(allocationEditValue);
+    if (!Number.isFinite(newCost) || newCost < 0) {
+      Swal.fire({ icon: "error", title: "Invalid amount", text: "Enter a valid non-negative budget amount." });
+      return;
+    }
+
+    setAllocationSaving(true);
+    try {
+      const response = await axios.put(`${API_BASE_URL}/projection/allocated`, {
+        site_id: selectedSite.value,
+        desc_id: selectedWorkDescription.value,
+        projection_id: allocationEditTarget.projectionId,
+        overhead_type_id: allocationEditTarget.allocation.overhead_type_id,
+        total_cost: newCost,
+        changed_by: atob(encodedUserId),
+      });
+      if (!response.data.success) {
+        throw new Error(response.data.message || "Failed to update allocated budget.");
+      }
+
+      await Promise.all([
+        fetchAllocatedOverheads(allocationEditTarget.projectionId),
+        ...projections
+          .filter((projection) => projection.id >= allocationEditTarget.projectionId)
+          .map((projection) => fetchRemainingBudget(projection.id)),
+      ]);
+      if (submissionStatuses[allocationEditTarget.projectionId]?.submitted) {
+        const latestSubmittedBudget = Object.entries(submissionStatuses)
+          .filter(([, status]) => status.submitted)
+          .sort(([projectionA], [projectionB]) => Number(projectionB) - Number(projectionA))[0]?.[1];
+        const latestBudgetId = latestSubmittedBudget?.po_budget_id || existingBudget?.id;
+        if (latestBudgetId) await fetchActualBudgetEntries(latestBudgetId);
+      }
+      setAllocationEditTarget(null);
+      Swal.fire({ icon: "success", title: "Allocation updated", text: response.data.message });
+    } catch (saveError) {
+      console.error("Error updating allocated budget:", saveError);
+      Swal.fire({
+        icon: "error",
+        title: "Update failed",
+        text: saveError.response?.data?.message || saveError.message || "Failed to update allocated budget.",
+      });
+    } finally {
+      setAllocationSaving(false);
+    }
+  }, [
+    allocationEditTarget, allocationEditValue, selectedSite, selectedWorkDescription,
+    encodedUserId, fetchAllocatedOverheads, fetchRemainingBudget, submissionStatuses,
+    existingBudget, fetchActualBudgetEntries, projections,
+  ]);
+  const openAllocationHistory = useCallback(async (projectionId, allocation) => {
+    if (!selectedSite?.value || !selectedWorkDescription?.value) return;
+    setAllocationHistoryTarget({ projectionId, allocation });
+    setAllocationHistory([]);
+    setAllocationHistoryError("");
+    setAllocationHistoryLoading(true);
+    try {
+      const response = await axios.get(`${API_BASE_URL}/projection/allocation-history`, {
+        params: {
+          site_id: selectedSite.value,
+          desc_id: selectedWorkDescription.value,
+          projection_id: projectionId,
+          overhead_type_id: allocation.overhead_type_id,
+        },
+      });
+      if (!response.data.success) {
+        throw new Error(response.data.message || "Failed to load allocation history.");
+      }
+      setAllocationHistory(response.data.data);
+    } catch (historyError) {
+      console.error("Error loading allocation history:", historyError);
+      setAllocationHistoryError(
+        historyError.response?.data?.message || historyError.message || "Failed to load allocation history."
+      );
+    } finally {
+      setAllocationHistoryLoading(false);
+    }
+  }, [selectedSite, selectedWorkDescription]);
   // Add this fetch function near other fetch functions
   const fetchMaterialActual = useCallback(async () => {
     if (!selectedSite?.value || !selectedWorkDescription?.value) return;
@@ -2637,12 +2724,39 @@ const addNewProjection = useCallback(async () => {
                  <div className="mt-8 p-6 bg-gradient-to-r from-indigo-50 to-blue-50 rounded-xl border border-indigo-200">
         <h4 className="text-xl font-semibold mb-6 text-indigo-800">Budget Allocation Summary</h4>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-          {/* Display from allocatedOverheads - NO edit/delete icons */}
+          {/* Allocated budgets remain editable after projection submission. */}
           {projection.allocatedOverheads.map((alloc) => (
             <div key={alloc.id} className="p-4 bg-white rounded-lg shadow-sm">
-              <p className="text-sm text-gray-600">{alloc.expense_name}</p>
-              <p className="text-lg font-bold text-indigo-700">₹{parseFloat(alloc.total_cost || 0).toLocaleString()}</p>
-              <p className="text-sm text-indigo-600">{parseFloat(alloc.budget_percentage || 0).toFixed(2)}%</p>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm text-gray-600">{alloc.expense_name}</p>
+                  <p className="text-lg font-bold text-indigo-700">₹{parseFloat(alloc.total_cost || 0).toLocaleString()}</p>
+                  <p className="text-sm text-indigo-600">{parseFloat(alloc.budget_percentage || 0).toFixed(2)}%</p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAllocationEditTarget({ projectionId: projection.id, allocation: alloc });
+                      setAllocationEditValue(String(alloc.total_cost || 0));
+                    }}
+                    className="rounded-md p-2 text-indigo-600 hover:bg-indigo-50"
+                    title={`Edit ${alloc.expense_name} allocation`}
+                    aria-label={`Edit ${alloc.expense_name} allocation`}
+                  >
+                    <Edit2 size={17} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openAllocationHistory(projection.id, alloc)}
+                    className="rounded-md p-2 text-gray-600 hover:bg-gray-100"
+                    title={`View ${alloc.expense_name} allocation history`}
+                    aria-label={`View ${alloc.expense_name} allocation history`}
+                  >
+                    <History size={17} />
+                  </button>
+                </div>
+              </div>
             </div>
           ))}
         </div>
@@ -2670,7 +2784,7 @@ const addNewProjection = useCallback(async () => {
         </div>
       );
     }),
-    [projections, toggleProjection, budgetData, loading, savePoBudget, updateProjectionField, overheads, handleSelectOverhead, addNewOverhead, handleLabourCalculationTypeChange, handleNoOfLaboursChange, handleTotalShiftsChange, handleRatePerShiftChange, saveLabourOverhead, handleRemoveOverhead, calculateDynamicOverheadBudgetPercentage, calculateRemainingBudget, saveDynamicOverhead, finalSubmissionProjection, selectedCompany, selectedProject, selectedSite, selectedWorkDescription, existingBudget, saveMaterialAllocation, calculateLabourTotalCost, recalculateAllPercentages, fetchAllocatedOverheads, fetchRemainingBudget, submissionStatuses, deleteOverhead, handleSubmit, materialOptions, uomOptions, handleEditAssignment, handleDeleteAssignment, handleAddMaterial, handleMaterialChange, handleItemSelect, handleRemoveMaterial, calculateCompQuantities, calculateTotalCost, overallCost, overallPercentage, materialError, materialLoading, addingMaterial, CustomCreateLabel]
+    [projections, toggleProjection, budgetData, loading, savePoBudget, updateProjectionField, overheads, handleSelectOverhead, addNewOverhead, handleLabourCalculationTypeChange, handleNoOfLaboursChange, handleTotalShiftsChange, handleRatePerShiftChange, saveLabourOverhead, handleRemoveOverhead, calculateDynamicOverheadBudgetPercentage, calculateRemainingBudget, saveDynamicOverhead, finalSubmissionProjection, selectedCompany, selectedProject, selectedSite, selectedWorkDescription, existingBudget, saveMaterialAllocation, calculateLabourTotalCost, recalculateAllPercentages, fetchAllocatedOverheads, fetchRemainingBudget, submissionStatuses, deleteOverhead, handleSubmit, materialOptions, uomOptions, handleEditAssignment, handleDeleteAssignment, handleAddMaterial, handleMaterialChange, handleItemSelect, handleRemoveMaterial, calculateCompQuantities, calculateTotalCost, overallCost, overallPercentage, materialError, materialLoading, addingMaterial, CustomCreateLabel, openAllocationHistory]
   );
   const addedOverheads = useMemo(() => overheads.filter(o => o.is_default === 0), [overheads]);
   return (
@@ -3010,6 +3124,118 @@ const addNewProjection = useCallback(async () => {
           </div>
         )}
       </div>
+      {allocationEditTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <div className="mb-5 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Edit allocated budget</h2>
+                <p className="text-sm text-gray-600">
+                  {allocationEditTarget.allocation.expense_name} · Projection {allocationEditTarget.projectionId}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAllocationEditTarget(null)}
+                className="rounded-md p-2 text-gray-500 hover:bg-gray-100"
+                aria-label="Close allocation editor"
+                disabled={allocationSaving}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <label htmlFor="projection-allocation-amount" className="mb-2 block text-sm font-medium text-gray-700">
+              Allocated amount (₹)
+            </label>
+            <input
+              id="projection-allocation-amount"
+              type="number"
+              min="0"
+              step="0.01"
+              value={allocationEditValue}
+              onChange={(event) => setAllocationEditValue(event.target.value)}
+              className="w-full rounded-lg border border-gray-300 p-3 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              autoFocus
+            />
+            <p className="mt-2 text-xs text-gray-500">
+              If the change exceeds the remaining budget, the difference will be transferred from other heads with available unspent allocation.
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setAllocationEditTarget(null)}
+                disabled={allocationSaving}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveProjectionAllocation}
+                disabled={allocationSaving}
+                className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {allocationSaving ? <Loader2 className="animate-spin" size={17} /> : <Save size={17} />}
+                {allocationSaving ? "Saving..." : "Save changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {allocationHistoryTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
+            <div className="mb-5 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Allocation change history</h2>
+                <p className="text-sm text-gray-600">
+                  {allocationHistoryTarget.allocation.expense_name} · Projection {allocationHistoryTarget.projectionId}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAllocationHistoryTarget(null)}
+                className="rounded-md p-2 text-gray-500 hover:bg-gray-100"
+                aria-label="Close allocation history"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            {allocationHistoryLoading ? (
+              <div className="flex items-center justify-center gap-2 py-12 text-gray-600">
+                <Loader2 className="animate-spin" size={20} /> Loading history...
+              </div>
+            ) : allocationHistoryError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                {allocationHistoryError}
+              </div>
+            ) : allocationHistory.length === 0 ? (
+              <p className="rounded-lg bg-gray-50 p-5 text-center text-sm text-gray-600">
+                No allocation changes have been recorded for this budget head.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {allocationHistory.map((entry) => (
+                  <div key={entry.id} className="rounded-lg border border-gray-200 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-medium text-gray-900">
+                        ₹{Number(entry.previous_total_cost).toLocaleString()} → ₹{Number(entry.new_total_cost).toLocaleString()}
+                      </p>
+                      <time className="text-sm text-gray-500">
+                        {new Date(entry.created_at).toLocaleString()}
+                      </time>
+                    </div>
+                    <p className="mt-1 text-sm text-gray-600">
+                      {Number(entry.previous_budget_percentage).toFixed(2)}% → {Number(entry.new_budget_percentage).toFixed(2)}%
+                      {" · "}Changed by {entry.changed_by || "Unknown"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       {/* Edit Modal - Global for Material */}
       {showEditModal && editingAssignment && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">

@@ -39,6 +39,8 @@ router.post('/save-material-allocation', projectionController.saveMaterialAlloca
 // Add to existing router
 router.get('/allocated', projectionController.getProjectionAllocated);
 router.get('/remaining', projectionController.getProjectionRemaining);
+router.put('/allocated', projectionController.updateProjectionAllocation);
+router.get('/allocation-history', projectionController.getProjectionAllocationEditHistory);
 
 // Add to existing router
 router.post('/update-overhead', projectionController.updateOverhead);
