@@ -2261,160 +2261,51 @@ exports.saveBudgetExpense = async (req, res) => {
     );
     let currActual = parseFloat(currentActual[0].actual_value) || 0;
 
-    // Check if entry already exists for this date
-    const [existingEntry] = await db.query(
-      `SELECT id, actual_budget_id, actual_value, remarks, item_description, uom, quantity, rate,
-              created_by, updated_by, created_at, updated_at
-       FROM actual_budget_history 
-       WHERE actual_budget_id = ? AND entry_date = ?`,
-      [budgetId, entry_date]
+    const newValue = validatedActualValue !== null ? validatedActualValue : 0;
+    const newActual = currActual + newValue;
+    const newDifference = splittedBudget - newActual;
+
+    if (newActual > splittedBudget) {
+      return res.status(400).json({ status: 'error', message: `Expense would exceed splitted budget (${splittedBudget.toFixed(2)})` });
+    }
+
+    await db.query(
+      `INSERT INTO actual_budget_history
+       (actual_budget_id, entry_date, actual_value, remarks, item_description, uom, quantity, rate, created_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [
+        budgetId,
+        entry_date,
+        newValue,
+        remarks || null,
+        lineDetails?.item_description || null,
+        lineDetails?.uom || null,
+        lineDetails?.quantity ?? null,
+        lineDetails?.rate ?? null,
+        created_by
+      ]
     );
 
-    if (existingEntry.length > 0) {
-      // Entry exists, update it
-      const existing = existingEntry[0];
-      
-      // Check 48-hour window from last update time
-      const lastUpdateTime = new Date(Math.max(new Date(existing.created_at), new Date(existing.updated_at || existing.created_at)));
-      const now = new Date();
-      const hoursDiff = (now - lastUpdateTime) / (1000 * 60 * 60);
-      
-      if (hoursDiff > 48) {
-        return res.status(400).json({
-          status: 'error',
-          message: `Cannot update budget expense. More than 48 hours have passed since creation/update (${hoursDiff.toFixed(1)} hours).`
-        });
-      }
+    await db.query(
+      `UPDATE actual_budget
+       SET
+         actual_value = ?,
+         difference_value = ?,
+         updated_by = ?,
+         updated_at = NOW()
+       WHERE id = ?`,
+      [
+        newActual,
+        newDifference,
+        created_by,
+        budgetId
+      ]
+    );
 
-      // Calculate old and new values for exceed check
-      const oldValue = parseFloat(existing.actual_value) || 0;
-      const newValue = validatedActualValue !== null ? validatedActualValue : oldValue;
-      const newActual = currActual - oldValue + newValue;
-      const newDifference = splittedBudget - newActual;
-
-      if (newActual > splittedBudget) {
-        return res.status(400).json({ status: 'error', message: `Expense would exceed splitted budget (${splittedBudget.toFixed(2)})` });
-      }
-
-      // Insert old state into edit history before updating
-      await db.query(
-        `INSERT INTO actual_budget_edit_history
-         (actual_budget_history_id, actual_budget_id, actual_value, remarks,
-          item_description, uom, quantity, rate, created_by, updated_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          existing.id,
-          budgetId,
-          existing.actual_value,
-          existing.remarks,
-          existing.item_description,
-          existing.uom,
-          existing.quantity,
-          existing.rate,
-          existing.created_by,
-          existing.updated_by,
-          existing.created_at,
-          existing.updated_at || existing.created_at
-        ]
-      );
-
-      // Update the existing entry
-      await db.query(
-        `UPDATE actual_budget_history 
-         SET 
-           actual_value = ?,
-           remarks = ?,
-           item_description = COALESCE(?, item_description),
-           uom = COALESCE(?, uom),
-           quantity = COALESCE(?, quantity),
-           rate = COALESCE(?, rate),
-           updated_by = ?,
-           updated_at = NOW()
-         WHERE id = ?`,
-        [
-          newValue,
-          remarks || null,
-          lineDetails?.item_description || null,
-          lineDetails?.uom || null,
-          lineDetails?.quantity ?? null,
-          lineDetails?.rate ?? null,
-          created_by,  // Use as updater
-          existing.id
-        ]
-      );
-
-      // Update cumulative in actual_budget
-      await db.query(
-        `UPDATE actual_budget 
-         SET 
-           actual_value = ?,
-           difference_value = ?,
-           updated_by = ?,
-           updated_at = NOW()
-         WHERE id = ?`,
-        [
-          newActual,
-          newDifference,
-          created_by,
-          budgetId
-        ]
-      );
-
-      res.status(200).json({
-        status: 'success',
-        message: 'Budget expense updated successfully'
-      });
-
-    } else {
-      // No existing entry, insert new one
-      const newValue = validatedActualValue !== null ? validatedActualValue : 0;
-      const newActual = currActual + newValue;
-      const newDifference = splittedBudget - newActual;
-
-      if (newActual > splittedBudget) {
-        return res.status(400).json({ status: 'error', message: `Expense would exceed splitted budget (${splittedBudget.toFixed(2)})` });
-      }
-
-      // Insert new entry into actual_budget_history
-      const [insertResult] = await db.query(
-        `INSERT INTO actual_budget_history 
-         (actual_budget_id, entry_date, actual_value, remarks, item_description, uom, quantity, rate, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-        [
-          budgetId,
-          entry_date,
-          newValue,
-          remarks || null,
-          lineDetails?.item_description || null,
-          lineDetails?.uom || null,
-          lineDetails?.quantity ?? null,
-          lineDetails?.rate ?? null,
-          created_by
-        ]
-      );
-
-      // Update cumulative in actual_budget
-      await db.query(
-        `UPDATE actual_budget 
-         SET 
-           actual_value = ?,
-           difference_value = ?,
-           updated_by = ?,
-           updated_at = NOW()
-         WHERE id = ?`,
-        [
-          newActual,
-          newDifference,
-          created_by,
-          budgetId
-        ]
-      );
-
-      res.status(201).json({
-        status: 'success',
-        message: 'Budget expense saved successfully'
-      });
-    }
+    res.status(201).json({
+      status: 'success',
+      message: 'Budget expense saved successfully'
+    });
 
   } catch (error) {
     console.error('Error in saveBudgetExpense:', error);

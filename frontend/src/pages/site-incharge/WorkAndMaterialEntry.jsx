@@ -2,7 +2,7 @@ import { API_BASE_URL } from "../../config/api.js";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import Select from "react-select";
-import { FileText, Save, HardHat } from "lucide-react";
+import { FileText, Save, HardHat, Pencil, X } from "lucide-react";
 import { ToastContainer, toast } from "react-toastify";
 import { useParams } from "react-router-dom";
 
@@ -33,11 +33,17 @@ const WorkAndMaterialEntry = () => {
   const [budgetHeads, setBudgetHeads] = useState([]);
   const [budgetExpenseData, setBudgetExpenseData] = useState({});
   const [budgetExpenseInputs, setBudgetExpenseInputs] = useState({});
+  const [budgetExpenseEditIds, setBudgetExpenseEditIds] = useState({});
   const [loading, setLoading] = useState(false);
   const [savingWork, setSavingWork] = useState(false);
   const [savingMaterials, setSavingMaterials] = useState(false);
   const [savingLabour, setSavingLabour] = useState(false);
   const [savingBudgetExpense, setSavingBudgetExpense] = useState(false);
+
+  useEffect(() => {
+    setBudgetExpenseInputs({});
+    setBudgetExpenseEditIds({});
+  }, [selectedDate, selectedSite?.value, selectedWorkDescription?.value]);
 
   useEffect(() => {
     try {
@@ -511,8 +517,37 @@ const WorkAndMaterialEntry = () => {
     }));
   };
 
+  const editBudgetExpenseEntry = (budgetId, entry) => {
+    setBudgetExpenseEditIds(previous => ({ ...previous, [budgetId]: entry.id }));
+    setBudgetExpenseInputs(previous => ({
+      ...previous,
+      [budgetId]: {
+        item_description: entry.item_description || "",
+        uom: entry.uom || "",
+        quantity: entry.quantity ?? "",
+        rate: entry.rate ?? ""
+      }
+    }));
+  };
+
+  const cancelBudgetExpenseEdit = (budgetId) => {
+    setBudgetExpenseEditIds(previous => {
+      const next = { ...previous };
+      delete next[budgetId];
+      return next;
+    });
+    setBudgetExpenseInputs(previous => {
+      const next = { ...previous };
+      delete next[budgetId];
+      return next;
+    });
+  };
+
   const saveBudgetExpenseEntry = async (budget) => {
-    const existing = budgetExpenseData[budget.id]?.entries?.[0];
+    const editingEntryId = budgetExpenseEditIds[budget.id];
+    const existing = budgetExpenseData[budget.id]?.entries?.find(
+      entry => String(entry.id) === String(editingEntryId)
+    );
     if (existing && !existing.is_editable) {
       toast.error("This budget expense is outside the 48-hour edit window");
       return;
@@ -561,6 +596,11 @@ const WorkAndMaterialEntry = () => {
       });
       setBudgetExpenseData(previous => ({ ...previous, [budget.id]: response.data.data }));
       setBudgetExpenseInputs(previous => ({ ...previous, [budget.id]: {} }));
+      setBudgetExpenseEditIds(previous => {
+        const next = { ...previous };
+        delete next[budget.id];
+        return next;
+      });
       toast.success(response.data.message || "Budget expense saved");
     } catch (error) {
       console.error("Failed to save budget expense:", error);
@@ -790,7 +830,9 @@ const WorkAndMaterialEntry = () => {
                 <div className="space-y-3">
                   {budgetHeads.map(budget => {
                     const details = budgetExpenseData[budget.id] || {};
-                    const existing = details.entries?.[0];
+                    const entries = details.entries || [];
+                    const editingEntryId = budgetExpenseEditIds[budget.id];
+                    const existing = entries.find(entry => String(entry.id) === String(editingEntryId));
                     const input = budgetExpenseInputs[budget.id] || {};
                     const description = input.item_description ?? existing?.item_description ?? "";
                     const uom = input.uom ?? existing?.uom ?? "";
@@ -814,22 +856,44 @@ const WorkAndMaterialEntry = () => {
                               {" · "}Spent to date: ₹{(Number(details.cumulative?.actual_value) || 0).toFixed(2)}
                             </p>
                           </div>
-                          {existing && !canEdit && (
-                            <span className="text-xs text-gray-500">Edit window expired</span>
-                          )}
                         </div>
 
+                        {entries.length > 0 && (
+                          <div className="mb-4 space-y-2">
+                            {entries.map((entry, index) => (
+                              <div key={entry.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-gray-50 p-3 text-sm text-gray-700">
+                                <div>
+                                  <div className="font-medium">
+                                    {index + 1}. {entry.item_description || entry.remarks || "Expense"}
+                                    {entry.uom ? ` · ${entry.quantity} ${entry.uom}` : ""}
+                                    {entry.rate !== null && entry.rate !== undefined
+                                      ? ` · ₹${Number(entry.rate).toFixed(2)} / unit`
+                                      : ""}
+                                  </div>
+                                  <div className="text-xs text-gray-500">
+                                    ₹{(Number(entry.actual_value) || 0).toFixed(2)}
+                                  </div>
+                                </div>
+                                {entry.is_editable ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => editBudgetExpenseEntry(budget.id, entry)}
+                                    className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                                  >
+                                    <Pencil size={14} />
+                                    Edit
+                                  </button>
+                                ) : (
+                                  <span className="text-xs text-gray-500">Edit window expired</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
                         {existing && (
-                          <div className="mb-3 rounded-md bg-gray-50 p-3 text-sm text-gray-700">
-                            <div className="font-medium">Saved for {selectedDate}</div>
-                            <div>
-                              {existing.item_description || existing.remarks || "Expense"}
-                              {existing.uom ? ` · ${existing.quantity} ${existing.uom}` : ""}
-                              {existing.rate !== null && existing.rate !== undefined
-                                ? ` · ₹${Number(existing.rate).toFixed(2)} / unit`
-                                : ""}
-                              {" · "}Value: ₹{(Number(existing.actual_value) || 0).toFixed(2)}
-                            </div>
+                          <div className="mb-3 text-sm font-medium text-indigo-700">
+                            Editing saved expense. Save changes or cancel to add another line.
                           </div>
                         )}
 
@@ -895,6 +959,17 @@ const WorkAndMaterialEntry = () => {
                         </div>
 
                         <div className="mt-3 flex justify-end">
+                          {existing && (
+                            <button
+                              type="button"
+                              onClick={() => cancelBudgetExpenseEdit(budget.id)}
+                              disabled={savingBudgetExpense}
+                              className="mr-2 inline-flex items-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                            >
+                              <X size={16} />
+                              Cancel
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => saveBudgetExpenseEntry(budget)}
