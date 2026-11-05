@@ -1350,12 +1350,9 @@ exports.getAssignedMaterials = async (req, res) => {
 
     console.log('Fetched assignments count:', rows.length);
 
-    // If only one row, return as object; otherwise array
-    const data = rows.length === 1 ? rows[0] : rows;
-
     res.status(200).json({
       status: "success",
-      data: data,
+      data: rows,
     });
   } catch (error) {
     console.error("Error fetching material assignments:", error);
@@ -1522,6 +1519,11 @@ exports.assignMaterial = async (req, res) => {
     );
     const budget_value = parseFloat(budgetRows[0]?.total_budget_value) || 0;
     const budget_percentage = budget_value > 0 ? (total_cost / budget_value * 100) : 0;
+
+    await connection.query(
+      'DELETE FROM projection_allocated WHERE site_id = ? AND desc_id = ? AND overhead_type_id = ? AND projection_id = ?',
+      [site_id, desc_id, overhead_type_id, firstProjectionId]
+    );
 
     await connection.query(
       `INSERT INTO projection_allocated (site_id, desc_id, overhead_type_id, projection_id, total_cost, budget_percentage, created_at, updated_at) 
@@ -2742,6 +2744,11 @@ exports.updateMaterialAssignment = async (req, res) => {
       const budget_percentage = budget_value > 0 ? (total_cost / budget_value * 100) : 0;
 
       await connection.query(
+        'DELETE FROM projection_allocated WHERE site_id = ? AND desc_id = ? AND overhead_type_id = ? AND projection_id = ?',
+        [site_id, desc_id, overhead_type_id, parsedProjectionId]
+      );
+
+      await connection.query(
         `INSERT INTO projection_allocated (site_id, desc_id, overhead_type_id, projection_id, total_cost, budget_percentage, created_at, updated_at) 
          VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) 
          ON DUPLICATE KEY UPDATE total_cost = ?, budget_percentage = ?, updated_at = CURRENT_TIMESTAMP`,
@@ -2863,6 +2870,11 @@ exports.deleteMaterialAssignment = async (req, res) => {
       
       const budget_value = parseFloat(budgetRows[0]?.total_budget_value) || 0;
       const budget_percentage = budget_value > 0 ? (total_cost / budget_value * 100) : 0;
+
+      await connection.query(
+        'DELETE FROM projection_allocated WHERE site_id = ? AND desc_id = ? AND overhead_type_id = ? AND projection_id = ?',
+        [site_id, desc_id, overhead_type_id, parsedProjectionId]
+      );
 
       await connection.query(
         `INSERT INTO projection_allocated (site_id, desc_id, overhead_type_id, projection_id, total_cost, budget_percentage, created_at, updated_at) 

@@ -660,11 +660,18 @@ exports.finalProjectionSubmission = async (req, res) => {
 
     // Step 2: Fetch all allocated overheads for this projection
     const [allocatedRows] = await conn.query(
-      'SELECT overhead_type_id, total_cost FROM projection_allocated WHERE site_id = ? AND desc_id = ? AND projection_id = ?',
+      `SELECT pa.overhead_type_id, pa.total_cost
+       FROM projection_allocated pa
+       JOIN (
+         SELECT MAX(id) AS id
+         FROM projection_allocated
+         WHERE site_id = ? AND desc_id = ? AND projection_id = ?
+         GROUP BY overhead_type_id
+       ) latest ON latest.id = pa.id`,
       [site_id, desc_id, projection_id]
     );
 
-    // Group allocatedRows by overhead_type_id and sum total_cost for this projection
+    // Keep the latest saved allocation for each overhead category.
     const summedAllocated = allocatedRows.reduce((acc, row) => {
       const { overhead_type_id, total_cost } = row;
       const cost = parseFloat(total_cost || 0);
@@ -970,7 +977,12 @@ exports.getProjectionAllocated = async (req, res) => {
               pa.total_cost, pa.budget_percentage, pa.created_at
        FROM projection_allocated pa
        JOIN overhead o ON pa.overhead_type_id = o.id
-       WHERE pa.site_id = ? AND pa.desc_id = ? AND pa.projection_id = ?
+       WHERE pa.id IN (
+         SELECT MAX(id)
+         FROM projection_allocated
+         WHERE site_id = ? AND desc_id = ? AND projection_id = ?
+         GROUP BY overhead_type_id
+       )
        ORDER BY o.expense_name ASC`,
       [site_id, desc_id, projection_id]
     );
@@ -1044,7 +1056,14 @@ exports.getProjectionRemaining = async (req, res) => {
     } else {
       // Calculate on-the-fly if not stored (for non-submitted)
       const [allocRows] = await db.query(
-        `SELECT SUM(total_cost) AS total_allocated FROM projection_allocated WHERE site_id = ? AND desc_id = ? AND projection_id = ?`,
+        `SELECT SUM(pa.total_cost) AS total_allocated
+         FROM projection_allocated pa
+         JOIN (
+           SELECT MAX(id) AS id
+           FROM projection_allocated
+           WHERE site_id = ? AND desc_id = ? AND projection_id = ?
+           GROUP BY overhead_type_id
+         ) latest ON latest.id = pa.id`,
         [site_id, desc_id, projection_id]
       );
       const total_allocated = parseFloat(allocRows[0].total_allocated) || 0;

@@ -285,7 +285,12 @@ const modalTotalCost = useMemo(() => {
       const response = await axios.get(
         `${API_BASE_URL}/material/assigned-materials?site_id=${site_id}&desc_id=${desc_id}&projection_id=${proj_id}`
       );
-      const assignedMaterials = Array.isArray(response.data?.data) ? response.data.data : [];
+      const responseData = response.data?.data;
+      const assignedMaterials = Array.isArray(responseData)
+        ? responseData
+        : responseData
+          ? [responseData]
+          : [];
       setExistingAssignments(assignedMaterials);
       // Initialize form with empty row only if no existing assignments
       if (assignedMaterials.length === 0) {
