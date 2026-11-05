@@ -598,22 +598,46 @@ const WorkAndMaterialEntry = () => {
 
     setSavingBudgetExpense(true);
     try {
+      let saveResponse;
       if (existing) {
-        await axios.put(`${API}/site-incharge/update-budget-expense-entry`, {
+        saveResponse = await axios.put(`${API}/site-incharge/update-budget-expense-entry`, {
           ...payload,
           entry_id: existing.id,
           updated_by: Number(userId)
         });
       } else {
-        await axios.post(`${API}/site-incharge/save-budget-expense`, {
+        saveResponse = await axios.post(`${API}/site-incharge/save-budget-expense`, {
           ...payload,
           created_by: Number(userId)
         });
       }
-      const response = await axios.get(`${API}/site-incharge/budget-expense-details`, {
-        params: { actual_budget_id: budget.id, date: selectedDate }
-      });
-      setBudgetExpenseData(previous => ({ ...previous, [budget.id]: response.data.data }));
+      const allocationChanges = saveResponse.data?.data?.allocation_changes || [];
+      if (allocationChanges.length > 0) {
+        const allocationById = new Map(
+          allocationChanges.map(change => [Number(change.actual_budget_id), Number(change.splitted_budget)])
+        );
+        setBudgetHeads(previous => previous.map(head =>
+          allocationById.has(Number(head.id))
+            ? { ...head, splitted_budget: allocationById.get(Number(head.id)) }
+            : head
+        ));
+      }
+      const affectedBudgetIds = new Set([
+        Number(budget.id),
+        ...allocationChanges.map(change => Number(change.actual_budget_id))
+      ]);
+      const refreshedBudgetDetails = await Promise.all(
+        [...affectedBudgetIds].map(async actualBudgetId => {
+          const response = await axios.get(`${API}/site-incharge/budget-expense-details`, {
+            params: { actual_budget_id: actualBudgetId, date: selectedDate }
+          });
+          return [actualBudgetId, response.data.data];
+        })
+      );
+      setBudgetExpenseData(previous => ({
+        ...previous,
+        ...Object.fromEntries(refreshedBudgetDetails)
+      }));
       setBudgetExpenseForms(previous => ({
         ...previous,
         [budget.id]: (previous[budget.id] || []).filter(item => item.id !== form.id)
@@ -623,7 +647,7 @@ const WorkAndMaterialEntry = () => {
         delete next[formKey];
         return next;
       });
-      toast.success(response.data.message || "Budget expense saved");
+      toast.success(saveResponse.data.message || "Budget expense saved");
     } catch (error) {
       console.error("Failed to save budget expense:", error);
       toast.error(error.response?.data?.message || "Failed to save budget expense");
@@ -906,6 +930,25 @@ const WorkAndMaterialEntry = () => {
                                 )}
                               </div>
                             ))}
+                          </div>
+                        )}
+
+                        {details.adjustments?.length > 0 && (
+                          <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3">
+                            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-900">
+                              Budget adjustment log
+                            </h4>
+                            <div className="space-y-1 text-xs text-amber-900">
+                              {details.adjustments.map(adjustment => (
+                                <div key={adjustment.id}>
+                                  ₹{Number(adjustment.amount).toFixed(2)} moved from{" "}
+                                  <strong>{adjustment.source_head}</strong> to{" "}
+                                  <strong>{adjustment.target_head}</strong>
+                                  {" · "}{String(adjustment.entry_date).slice(0, 10)}
+                                  {adjustment.adjusted_by ? ` · User ${adjustment.adjusted_by}` : ""}
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         )}
 
