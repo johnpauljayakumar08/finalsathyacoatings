@@ -994,17 +994,15 @@ const WorkAndMaterialEntry = () => {
                         </div>
 
                         <div className="mt-3 flex justify-end">
-                          {existing && (
-                            <button
-                              type="button"
-                              onClick={() => cancelBudgetExpenseEdit(budget.id, form.id)}
-                              disabled={savingBudgetExpense}
-                              className="mr-2 inline-flex items-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                            >
-                              <X size={16} />
-                              Cancel
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => cancelBudgetExpenseEdit(budget.id, form.id)}
+                            disabled={savingBudgetExpense}
+                            className="mr-2 inline-flex items-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                          >
+                            <X size={16} />
+                            {existing ? "Cancel" : "Remove"}
+                          </button>
                           <button
                             type="button"
                             onClick={() => saveBudgetExpenseEntry(budget, form)}
