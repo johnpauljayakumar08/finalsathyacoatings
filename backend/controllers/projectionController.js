@@ -1,5 +1,35 @@
 // projectionController.js
 const db = require("../config/db");
+const { calculateProjectionBalances } = require("../services/projectionBudgetMath");
+
+const getProjectionBalances = async (queryable, siteId, descId, projectionId) => {
+  const [budgetRows] = await queryable.query(
+    `SELECT pb.id, pb.projection_id, pb.total_budget_value
+     FROM po_budget pb
+     JOIN (
+       SELECT projection_id, MAX(id) AS id
+       FROM po_budget
+       WHERE site_id = ? AND desc_id = ? AND projection_id <= ?
+       GROUP BY projection_id
+     ) latest ON latest.id = pb.id
+     ORDER BY pb.projection_id`,
+    [siteId, descId, projectionId],
+  );
+  const [allocationRows] = await queryable.query(
+    `SELECT pa.projection_id, pa.total_cost
+     FROM projection_allocated pa
+     JOIN (
+       SELECT projection_id, overhead_type_id, MAX(id) AS id
+       FROM projection_allocated
+       WHERE site_id = ? AND desc_id = ? AND projection_id <= ?
+       GROUP BY projection_id, overhead_type_id
+     ) latest ON latest.id = pa.id
+     ORDER BY pa.projection_id`,
+    [siteId, descId, projectionId],
+  );
+
+  return calculateProjectionBalances(budgetRows, allocationRows, projectionId);
+};
 
 // Fetch PO totals by site ID and desc ID
 exports.getPoTotalBudget = async (req, res) => {
@@ -121,23 +151,39 @@ exports.savePoBudget = async (req, res) => {
   // Determine projection_status: 1 for projection_id=1, 0 otherwise
   const projection_status = parsedProjectionId === 1 ? 1 : 0;
 
+  let connection;
   try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
     // Check if a record already exists for the site_id, desc_id, and projection_id
-    const [existing] = await db.query(
-      `SELECT id, projection_id FROM po_budget WHERE site_id = ? AND desc_id = ? AND projection_id = ?`,
+    const [existing] = await connection.query(
+      `SELECT id, projection_id FROM po_budget WHERE site_id = ? AND desc_id = ? AND projection_id = ? FOR UPDATE`,
       [site_id, desc_id, parsedProjectionId]
     );
 
     let budgetId;
     if (existing.length > 0) {
+      const [submittedRows] = await connection.query(
+        'SELECT id FROM actual_budget WHERE po_budget_id IN (?) LIMIT 1 FOR UPDATE',
+        [existing.map(budget => budget.id)]
+      );
+      if (submittedRows.length > 0) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          code: 'OPERATIONAL_COST_REQUEST_REQUIRED',
+          message: 'A submitted projection can change Operational Cost only through a request approved by the Managing Director.',
+        });
+      }
       // Update existing record (projection_id and projection_status remain unchanged)
-      await db.query(
+      await connection.query(
         `UPDATE po_budget 
          SET total_po_value = ?, total_budget_value = ?, projection_status = ?, updated_at = CURRENT_TIMESTAMP 
          WHERE site_id = ? AND desc_id = ? AND projection_id = ?`,
         [total_po_value, total_budget_value, projection_status, site_id, desc_id, parsedProjectionId]
       );
       budgetId = existing[0].id;
+      await connection.commit();
       return res.status(200).json({
         success: true,
         message: "Budget updated successfully (projection_id unchanged)",
@@ -145,12 +191,13 @@ exports.savePoBudget = async (req, res) => {
       });
     } else {
       // Insert new record with the provided projection_id and projection_status
-      const [result] = await db.query(
+      const [result] = await connection.query(
         `INSERT INTO po_budget (site_id, desc_id, total_po_value, total_budget_value, projection_id, projection_status) 
          VALUES (?, ?, ?, ?, ?, ?)`,
         [site_id, desc_id, total_po_value, total_budget_value, parsedProjectionId, projection_status]
       );
       budgetId = result.insertId;
+      await connection.commit();
       return res.status(201).json({
         success: true,
         message: "Budget saved successfully",
@@ -158,12 +205,15 @@ exports.savePoBudget = async (req, res) => {
       });
     }
   } catch (error) {
+    if (connection) await connection.rollback().catch(rollbackError => console.error('Budget rollback failed:', rollbackError));
     console.error("Error saving PO budget:", error);
     res.status(500).json({
       success: false,
       message: "Failed to save budget",
       error: error.message,
     });
+  } finally {
+    if (connection) connection.release();
   }
 };
 exports.getOverheads = async (req, res) => {
@@ -275,6 +325,18 @@ exports.saveDynamicOverheadValues = async (req, res) => {
     }
     const overhead_type_id = overheadRows[0].id;
 
+    const [poBudgetRows] = await conn.query(
+      `SELECT total_budget_value
+       FROM po_budget
+       WHERE site_id = ? AND desc_id = ? AND projection_id = ?
+       FOR UPDATE`,
+      [site_id, desc_id, parseInt(projection_id)]
+    );
+    if (poBudgetRows.length === 0) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Projection budget was not found.' });
+    }
+
     // Step 2: Check if record already exists for this unique combination
     const [existingRows] = await conn.query(
       `SELECT id FROM projection_allocated 
@@ -282,6 +344,44 @@ exports.saveDynamicOverheadValues = async (req, res) => {
        LIMIT 1`,
       [site_id, desc_id, overhead_type_id, parseInt(projection_id)]
     );
+
+    const [allocationRows] = await conn.query(
+      `SELECT pa.overhead_type_id, pa.total_cost
+       FROM projection_allocated pa
+       JOIN (
+         SELECT overhead_type_id, MAX(id) AS id
+         FROM projection_allocated
+         WHERE site_id = ? AND desc_id = ? AND projection_id = ?
+         GROUP BY overhead_type_id
+       ) latest ON latest.id = pa.id
+       FOR UPDATE`,
+      [site_id, desc_id, parseInt(projection_id)]
+    );
+    const currentCostByHead = new Map(
+      allocationRows.map(row => [Number(row.overhead_type_id), Number(row.total_cost) || 0])
+    );
+    let previousRemaining = 0;
+    if (Number(projection_id) > 1) {
+      const previousBalance = await getProjectionBalances(
+        conn,
+        site_id,
+        desc_id,
+        Number(projection_id) - 1,
+      );
+      previousRemaining = previousBalance?.remaining_budget || 0;
+    }
+    const effectiveBudget = (Number(poBudgetRows[0].total_budget_value) || 0) + previousRemaining;
+    const currentHeadCost = currentCostByHead.get(Number(overhead_type_id)) || 0;
+    const allocatedTotal = [...currentCostByHead.values()].reduce((sum, cost) => sum + cost, 0);
+    const remainingBeforeSave = effectiveBudget - allocatedTotal;
+    const plannedTotal = allocatedTotal - currentHeadCost + Number(value);
+    if (plannedTotal > effectiveBudget + 0.009) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Cannot save ₹${Number(value).toFixed(2)}. The remaining budget is only ₹${Math.max(remainingBeforeSave, 0).toFixed(2)}. Reduce the amount to the available remaining budget.`
+      });
+    }
 
     if (existingRows.length > 0) {
       // Step 3: Update existing record
@@ -656,7 +756,7 @@ exports.finalProjectionSubmission = async (req, res) => {
       return res.status(400).json({ success: false, message: 'PO budget not found for this projection' });
     }
     const po_budget_id = poBudgetRows[0].id;
-    const total_budget_value = parseFloat(poBudgetRows[0].total_budget_value);
+    const total_budget_value = parseFloat(poBudgetRows[0].total_budget_value) || 0;
 
     // Step 2: Fetch all allocated overheads for this projection
     const [allocatedRows] = await conn.query(
@@ -716,8 +816,12 @@ exports.finalProjectionSubmission = async (req, res) => {
 
     // Step 5: Calculate remaining budget/percentage and insert into projection_remaining
     const totalAllocated = Object.values(summedAllocated).reduce((sum, cost) => sum + parseFloat(cost), 0);
-    const remaining_budget = total_budget_value - totalAllocated;
-    const remaining_percentage = total_budget_value > 0 ? (remaining_budget / total_budget_value * 100) : 0;
+    const balance = await getProjectionBalances(conn, site_id, desc_id, projection_id);
+    const effective_budget = balance?.effective_budget ?? total_budget_value;
+    const remaining_budget = Number((effective_budget - totalAllocated).toFixed(2));
+    const remaining_percentage = effective_budget > 0
+      ? (remaining_budget / effective_budget * 100)
+      : 0;
 
     await conn.query(
       'INSERT INTO projection_remaining (site_id, desc_id, remaining_budget, remaining_percentage, projection_id, created_by) VALUES (?, ?, ?, ?, ?, NULL)',
@@ -973,8 +1077,8 @@ exports.getProjectionAllocated = async (req, res) => {
 
   try {
     const [rows] = await db.query(
-      `SELECT pa.id, pa.site_id, pa.desc_id, pa.overhead_type_id, o.expense_name, pa.projection_id, 
-              pa.total_cost, pa.budget_percentage, pa.created_at
+      `SELECT pa.id, pa.site_id, pa.desc_id, pa.overhead_type_id, o.expense_name,
+              o.is_default, pa.projection_id, pa.total_cost, pa.budget_percentage, pa.created_at
        FROM projection_allocated pa
        JOIN overhead o ON pa.overhead_type_id = o.id
        WHERE pa.id IN (
@@ -987,20 +1091,19 @@ exports.getProjectionAllocated = async (req, res) => {
       [site_id, desc_id, projection_id]
     );
 
-    // Fetch prev remaining if projection_id > 1
+    // Calculate carry-forward from allocations so stale saved balances are not reused.
     let prevRemaining = { prev_remaining_budget: 0, prev_remaining_percentage: 0 };
     if (parseInt(projection_id) > 1) {
-      const [prevRows] = await db.query(
-        `SELECT remaining_budget, remaining_percentage 
-         FROM projection_remaining 
-         WHERE site_id = ? AND desc_id = ? AND projection_id = ? 
-         ORDER BY created_at DESC LIMIT 1`,
-        [site_id, desc_id, parseInt(projection_id) - 1]
+      const previousBalance = await getProjectionBalances(
+        db,
+        site_id,
+        desc_id,
+        Number(projection_id) - 1,
       );
-      if (prevRows.length > 0) {
+      if (previousBalance) {
         prevRemaining = {
-          prev_remaining_budget: parseFloat(prevRows[0].remaining_budget) || 0,
-          prev_remaining_percentage: parseFloat(prevRows[0].remaining_percentage) || 0
+          prev_remaining_budget: previousBalance.remaining_budget,
+          prev_remaining_percentage: previousBalance.remaining_percentage
         };
       }
     }
@@ -1021,16 +1124,18 @@ exports.getProjectionAllocated = async (req, res) => {
 };
 
 exports.updateProjectionAllocation = async (req, res) => {
-  const { site_id, desc_id, projection_id, overhead_type_id, total_cost, changed_by } = req.body;
+  const { site_id, desc_id, projection_id, overhead_type_id, allocation_id, total_cost, changed_by } = req.body;
   const siteId = String(site_id || '').trim();
   const descId = Number(desc_id);
   const projectionId = Number(projection_id);
   const overheadTypeId = Number(overhead_type_id);
+  const allocationId = allocation_id === undefined || allocation_id === null ? null : Number(allocation_id);
   const requestedCost = Number(total_cost);
 
   if (!siteId || !Number.isInteger(descId) || descId <= 0 ||
       !Number.isInteger(projectionId) || projectionId <= 0 ||
       !Number.isInteger(overheadTypeId) || overheadTypeId <= 0 ||
+      (allocationId !== null && (!Number.isInteger(allocationId) || allocationId <= 0)) ||
       !Number.isFinite(requestedCost) || requestedCost < 0 ||
       (changed_by !== undefined && changed_by !== null && !/^\d{1,30}$/.test(String(changed_by)))) {
     return res.status(400).json({ success: false, message: 'Valid site, description, projection, overhead, and non-negative allocation amount are required.' });
@@ -1043,7 +1148,7 @@ exports.updateProjectionAllocation = async (req, res) => {
     await conn.beginTransaction();
 
     const [poRows] = await conn.query(
-      `SELECT id, total_budget_value
+      `SELECT id, total_budget_value, total_po_value
        FROM po_budget
        WHERE site_id = ? AND desc_id = ? AND projection_id = ?
        FOR UPDATE`,
@@ -1064,120 +1169,104 @@ exports.updateProjectionAllocation = async (req, res) => {
     );
     const latestAllocations = new Map();
     allocationRows.forEach(row => latestAllocations.set(Number(row.overhead_type_id), row));
-    const targetAllocation = latestAllocations.get(overheadTypeId);
+    const allocationById = allocationId === null
+      ? null
+      : allocationRows.find(row => Number(row.id) === allocationId);
+    const targetOverheadTypeId = allocationById
+      ? Number(allocationById.overhead_type_id)
+      : overheadTypeId;
+    const targetAllocation = latestAllocations.get(targetOverheadTypeId);
     if (!targetAllocation) {
+      const [overheadRows] = await conn.query(
+        'SELECT id FROM overhead WHERE id = ? FOR UPDATE',
+        [targetOverheadTypeId]
+      );
+      if (overheadRows.length === 0) {
+        await conn.rollback();
+        return res.status(404).json({ success: false, message: 'The selected budget head was not found.' });
+      }
+    }
+
+    if (allocationId !== null && allocationById && Number(allocationById.overhead_type_id) !== overheadTypeId) {
       await conn.rollback();
-      return res.status(404).json({ success: false, message: 'The selected allocated budget head was not found.' });
+      return res.status(400).json({ success: false, message: 'The selected allocation does not match the requested budget head.' });
     }
 
     let previousRemaining = 0;
     if (projectionId > 1) {
-      const [previousRows] = await conn.query(
-        `SELECT remaining_budget
-         FROM projection_remaining
-         WHERE site_id = ? AND desc_id = ? AND projection_id = ?
-         ORDER BY created_at DESC, id DESC
-         LIMIT 1`,
-        [siteId, descId, projectionId - 1]
+      const previousBalance = await getProjectionBalances(
+        conn,
+        siteId,
+        descId,
+        projectionId - 1,
       );
-      previousRemaining = Number(previousRows[0]?.remaining_budget) || 0;
+      previousRemaining = previousBalance?.remaining_budget || 0;
     }
-    const effectiveBudget = (Number(poRows[0].total_budget_value) || 0) + previousRemaining;
+    let effectiveBudget = (Number(poRows[0].total_budget_value) || 0) + previousRemaining;
     const plannedCosts = new Map(
       [...latestAllocations].map(([id, row]) => [id, Number(row.total_cost) || 0])
     );
-    plannedCosts.set(overheadTypeId, newCost);
-    let plannedTotal = [...plannedCosts.values()].reduce((sum, cost) => sum + cost, 0);
-    let donorBudgetRows = [];
-
-    if (plannedTotal > effectiveBudget + 0.009) {
-      const [submittedBudgetRows] = await conn.query(
-        `SELECT ab.id, ab.overhead_id, ab.splitted_budget, ab.actual_value,
-                COALESCE(SUM(history.actual_value), 0) AS history_spent
-         FROM actual_budget ab
-         JOIN po_budget pb ON pb.id = ab.po_budget_id
-         LEFT JOIN actual_budget_history history ON history.actual_budget_id = ab.id
-         WHERE pb.site_id = ? AND pb.desc_id = ?
-           AND pb.projection_id = (
-             SELECT MAX(submitted.projection_id)
-             FROM po_budget submitted
-             JOIN actual_budget submitted_budget ON submitted_budget.po_budget_id = submitted.id
-             WHERE submitted.site_id = ? AND submitted.desc_id = ?
-           )
-         GROUP BY ab.id
-         FOR UPDATE`,
-        [siteId, descId, siteId, descId]
-      );
-      const submittedByOverhead = new Map(
-        submittedBudgetRows.map(row => [Number(row.overhead_id), row])
-      );
-      donorBudgetRows = [...latestAllocations]
-        .filter(([id]) => id !== overheadTypeId)
-        .map(([id, row]) => {
-          const submitted = submittedByOverhead.get(id);
-          const committed = submitted
-            ? Math.max(Number(submitted.actual_value) || 0, Number(submitted.history_spent) || 0)
-            : 0;
-          const submittedAvailable = submitted
-            ? Math.max((Number(submitted.splitted_budget) || 0) - committed, 0)
-            : Number(row.total_cost) || 0;
-          const available = Math.max(Math.min(Number(row.total_cost) || 0, submittedAvailable), 0);
-          return { id, row, submitted, available };
-        })
-        .filter(donor => donor.available > 0)
-        .sort((a, b) => b.available - a.available);
-
-      let shortfall = Math.round((plannedTotal - effectiveBudget) * 100) / 100;
-      for (const donor of donorBudgetRows) {
-        if (shortfall <= 0) break;
-        const reduction = Math.min(donor.available, shortfall);
-        plannedCosts.set(donor.id, Math.round((plannedCosts.get(donor.id) - reduction) * 100) / 100);
-        shortfall = Math.round((shortfall - reduction) * 100) / 100;
-      }
-      if (shortfall > 0.009) {
-        await conn.rollback();
-        return res.status(400).json({
-          success: false,
-          message: `The new allocation exceeds the available projection budget by ₹${shortfall.toFixed(2)}. Other heads do not have enough unspent allocation to transfer.`
-        });
-      }
-      plannedTotal = [...plannedCosts.values()].reduce((sum, cost) => sum + cost, 0);
+    plannedCosts.set(targetOverheadTypeId, newCost);
+    const plannedTotal = [...plannedCosts.values()].reduce((sum, cost) => sum + cost, 0);
+    const reserveFundUsed = Math.max(Number((plannedTotal - effectiveBudget).toFixed(2)), 0);
+    let approvedBy = null;
+    if (reserveFundUsed > 0.009) {
+      await conn.rollback();
+      return res.status(403).json({
+        success: false,
+        code: 'OPERATIONAL_COST_REQUEST_REQUIRED',
+        message: 'Submit an Operational Cost change request with a remark. Reserved funds can be used only after Managing Director approval.',
+      });
     }
 
     const changedAllocations = [];
     for (const [id, nextCost] of plannedCosts) {
       const current = latestAllocations.get(id);
-      if (!current || Math.abs((Number(current.total_cost) || 0) - nextCost) < 0.005) continue;
+      if (current && Math.abs((Number(current.total_cost) || 0) - nextCost) < 0.005) continue;
       const nextPercentage = effectiveBudget > 0 ? (nextCost / effectiveBudget) * 100 : 0;
-      await conn.query(
-        `UPDATE projection_allocated
-         SET total_cost = ?, budget_percentage = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [nextCost, nextPercentage, current.id]
-      );
+      if (current) {
+        await conn.query(
+          `UPDATE projection_allocated
+           SET total_cost = ?, budget_percentage = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [nextCost, nextPercentage, current.id]
+        );
+      } else {
+        await conn.query(
+          `INSERT INTO projection_allocated
+           (site_id, desc_id, overhead_type_id, projection_id, total_cost, budget_percentage)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [siteId, descId, id, projectionId, nextCost, nextPercentage]
+        );
+      }
       await conn.query(
         `INSERT INTO projection_allocation_edit_history
          (site_id, desc_id, projection_id, overhead_type_id,
           previous_total_cost, new_total_cost, previous_budget_percentage,
-          new_budget_percentage, changed_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          new_budget_percentage, changed_by, approved_by, reserved_fund_change)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           siteId,
           descId,
           projectionId,
           id,
-          Number(current.total_cost) || 0,
+          Number(current?.total_cost) || 0,
           nextCost,
-          Number(current.budget_percentage) || 0,
+          Number(current?.budget_percentage) || 0,
           nextPercentage,
-          changed_by === undefined || changed_by === null ? null : String(changed_by)
+          changed_by === undefined || changed_by === null ? null : String(changed_by),
+          id === targetOverheadTypeId ? approvedBy : null,
+          id === targetOverheadTypeId ? reserveFundUsed : 0
         ]
       );
       changedAllocations.push({
         overhead_type_id: id,
         total_cost: nextCost,
         budget_percentage: nextPercentage,
-        delta: Number((nextCost - (Number(current.total_cost) || 0)).toFixed(2))
+        delta: Number((nextCost - (Number(current?.total_cost) || 0)).toFixed(2)),
+        added: !current,
+        approved_by: id === targetOverheadTypeId ? approvedBy : null,
+        reserved_fund_change: id === targetOverheadTypeId ? reserveFundUsed : 0,
       });
     }
 
@@ -1217,7 +1306,7 @@ exports.updateProjectionAllocation = async (req, res) => {
             await conn.rollback();
             return res.status(400).json({
               success: false,
-              message: `Cannot reduce ${change.overhead_type_id === overheadTypeId ? 'this' : 'another'} head below its amount already spent (₹${spent.toFixed(2)}).`
+              message: `Cannot reduce ${change.overhead_type_id === targetOverheadTypeId ? 'this' : 'another'} head below its amount already spent (₹${spent.toFixed(2)}).`
             });
           }
           await conn.query(
@@ -1309,12 +1398,17 @@ exports.updateProjectionAllocation = async (req, res) => {
     await conn.commit();
     res.status(200).json({
       success: true,
-      message: changedAllocations.length > 1
-        ? 'Allocation updated and the difference transferred from other heads.'
-        : 'Allocation updated successfully.',
+      message: reserveFundUsed > 0
+        ? `Allocation updated using ₹${reserveFundUsed.toFixed(2)} from the reserved fund with Managing Director approval.`
+        : changedAllocations.some(change => change.added)
+          ? 'New budget head added to the submitted projection.'
+          : 'Allocation updated successfully.',
       data: {
         changed_allocations: changedAllocations,
-        remaining_budget: Number((effectiveBudget - plannedTotal).toFixed(2))
+        remaining_budget: Number((effectiveBudget - plannedTotal).toFixed(2)),
+        operational_cost: Number((Number(poRows[0].total_budget_value) + reserveFundUsed).toFixed(2)),
+        reserved_fund_remaining: Number(Math.max((Number(poRows[0].total_po_value) || 0) - Number(poRows[0].total_budget_value) - reserveFundUsed, 0).toFixed(2)),
+        reserved_fund_used: reserveFundUsed,
       }
     });
   } catch (error) {
@@ -1337,7 +1431,8 @@ exports.getProjectionAllocationEditHistory = async (req, res) => {
     const [rows] = await db.query(
       `SELECT history.id, history.previous_total_cost, history.new_total_cost,
               history.previous_budget_percentage, history.new_budget_percentage,
-              history.changed_by, history.created_at, overhead.expense_name
+              history.changed_by, history.approved_by, history.reserved_fund_change,
+              history.created_at, overhead.expense_name
        FROM projection_allocation_edit_history history
        JOIN overhead ON overhead.id = history.overhead_type_id
        WHERE history.site_id = ? AND history.desc_id = ?
@@ -1364,56 +1459,19 @@ exports.getProjectionRemaining = async (req, res) => {
   }
 
   try {
-    // Fetch po_budget total_budget_value
-    const [poRows] = await db.query(
-      `SELECT total_budget_value FROM po_budget WHERE site_id = ? AND desc_id = ? AND projection_id = ?`,
-      [site_id, desc_id, projection_id]
+    const balance = await getProjectionBalances(
+      db,
+      site_id,
+      desc_id,
+      Number(projection_id),
     );
-    const total_budget_value = poRows.length > 0 ? parseFloat(poRows[0].total_budget_value) || 0 : 0;
-
-    const [rows] = await db.query(
-      `SELECT remaining_budget, remaining_percentage, created_at 
-       FROM projection_remaining 
-       WHERE site_id = ? AND desc_id = ? AND projection_id = ? 
-       ORDER BY created_at DESC LIMIT 1`,
-      [site_id, desc_id, projection_id]
-    );
-
-    let remainingData = { remaining_budget: 0, remaining_percentage: 0 };
-    if (rows.length > 0) {
-      remainingData = {
-        remaining_budget: parseFloat(rows[0].remaining_budget) || 0,
-        remaining_percentage: parseFloat(rows[0].remaining_percentage) || 0
-      };
-    } else {
-      // Calculate on-the-fly if not stored (for non-submitted)
-      const [allocRows] = await db.query(
-        `SELECT SUM(pa.total_cost) AS total_allocated
-         FROM projection_allocated pa
-         JOIN (
-           SELECT MAX(id) AS id
-           FROM projection_allocated
-           WHERE site_id = ? AND desc_id = ? AND projection_id = ?
-           GROUP BY overhead_type_id
-         ) latest ON latest.id = pa.id`,
-        [site_id, desc_id, projection_id]
-      );
-      const total_allocated = parseFloat(allocRows[0].total_allocated) || 0;
-      remainingData.remaining_budget = total_budget_value - total_allocated;
-      remainingData.remaining_percentage = total_budget_value > 0 ? (remainingData.remaining_budget / total_budget_value * 100) : 0;
-    }
-
-    // Add effective_budget (total + prev remaining)
-    let effective_budget = total_budget_value;
-    if (parseInt(projection_id) > 1) {
-      const [prevRows] = await db.query(
-        `SELECT remaining_budget FROM projection_remaining WHERE site_id = ? AND desc_id = ? AND projection_id = ? ORDER BY created_at DESC LIMIT 1`,
-        [site_id, desc_id, parseInt(projection_id) - 1]
-      );
-      if (prevRows.length > 0) {
-        effective_budget += parseFloat(prevRows[0].remaining_budget) || 0;
-      }
-    }
+    const remainingData = balance
+      ? {
+          remaining_budget: balance.remaining_budget,
+          remaining_percentage: balance.remaining_percentage,
+        }
+      : { remaining_budget: 0, remaining_percentage: 0 };
+    const effective_budget = balance?.effective_budget || 0;
 
     res.status(200).json({
       success: true,

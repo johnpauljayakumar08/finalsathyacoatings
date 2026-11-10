@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const projectionController = require('../controllers/projectionController');
+const operationalCostController = require('../controllers/projectionOperationalCostController');
 
 // Route to get PO totals by site ID and desc ID
 router.get('/po-total-budget/:siteId/:descId', projectionController.getPoTotalBudget);
@@ -41,6 +42,9 @@ router.get('/allocated', projectionController.getProjectionAllocated);
 router.get('/remaining', projectionController.getProjectionRemaining);
 router.put('/allocated', projectionController.updateProjectionAllocation);
 router.get('/allocation-history', projectionController.getProjectionAllocationEditHistory);
+router.get('/operational-cost-requests', operationalCostController.listOperationalCostChangeRequests);
+router.post('/operational-cost-requests', operationalCostController.createOperationalCostChangeRequest);
+router.put('/operational-cost-requests/:requestId/review', operationalCostController.reviewOperationalCostChangeRequest);
 
 // Add to existing router
 router.post('/update-overhead', projectionController.updateOverhead);

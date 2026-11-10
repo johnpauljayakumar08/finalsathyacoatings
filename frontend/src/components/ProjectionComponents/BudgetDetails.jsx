@@ -52,7 +52,10 @@ const BudgetDetails = ({
           <h4 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Budget Information</h4>
           <p className="text-sm">PO Value: Rs.{budgetData.total_po_value.toFixed(2)}</p>
           <p className="text-sm">
-            Existing Budget Value: {existingBudget ? `Rs.${existingBudget.total_budget_value.toFixed(2)}` : "Not set"}
+            Operational Cost: {existingBudget ? `Rs.${existingBudget.total_budget_value.toFixed(2)}` : "Not set"}
+          </p>
+          <p className="text-sm">
+            Reserved Fund: {existingBudget ? `Rs.${(Number(budgetData.total_po_value) - Number(existingBudget.total_budget_value)).toFixed(2)}` : "Not set"}
           </p>
         </div>
 

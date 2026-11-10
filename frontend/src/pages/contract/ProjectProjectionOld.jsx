@@ -1921,7 +1921,8 @@ const ProjectionAccordion = useMemo(() =>
                   Budget Information
                 </h4>
                 <p className="text-sm text-gray-900">PO Value: ₹{budgetData.total_po_value.toLocaleString()}</p>
-                <p className="text-sm text-gray-900">Existing Budget Value: {existingBudget ? `₹${parseFloat(existingBudget.total_budget_value).toLocaleString()}` : "Not set"}</p>
+                <p className="text-sm text-gray-900">Operational Cost: {existingBudget ? `₹${parseFloat(existingBudget.total_budget_value).toLocaleString()}` : "Not set"}</p>
+                <p className="text-sm text-gray-900">Reserved Fund: {existingBudget ? `₹${(Number(budgetData.total_po_value) - (Number(existingBudget.total_budget_value) || 0)).toLocaleString()}` : "Not set"}</p>
               </div>
 
               <div className="p-4 bg-gray-50 rounded-lg">

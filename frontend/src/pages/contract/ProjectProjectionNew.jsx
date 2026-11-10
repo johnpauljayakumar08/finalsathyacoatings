@@ -83,6 +83,15 @@ const ProjectProjectionNew = () => {
   const [allocationHistory, setAllocationHistory] = useState([]);
   const [allocationHistoryLoading, setAllocationHistoryLoading] = useState(false);
   const [allocationHistoryError, setAllocationHistoryError] = useState("");
+  const [operationalCostRequests, setOperationalCostRequests] = useState([]);
+  const [operationalCostRequestsLoading, setOperationalCostRequestsLoading] = useState(false);
+  const [operationalCostRequestSaving, setOperationalCostRequestSaving] = useState(false);
+  const [canReviewOperationalCostRequests, setCanReviewOperationalCostRequests] = useState(false);
+  const isStandardOverhead = useCallback((overhead) => (
+    ['material', 'materials', 'labour', 'labours'].includes(
+      String(overhead.expense_name || '').trim().toLowerCase()
+    )
+  ), []);
   // Memoized chart data (updated: use last projection's budgetValue only, no + prevRem)
   const lastProjection = useMemo(() => projections[projections.length - 1], [projections]);
   const effectiveBudgetValue = useMemo(() => {
@@ -235,14 +244,42 @@ const modalTotalCost = useMemo(() => {
         params: { site_id: selectedSite.value, desc_id: selectedWorkDescription.value, projection_id: projId },
       });
       if (response.data.success) {
+        const allocatedRows = Array.isArray(response.data.data) ? response.data.data : [];
         setProjections(prev => prev.map(p =>
-          p.id === projId ? { ...p, allocatedOverheads: response.data.data, prevRemainingBudget: response.data.prev_remaining.prev_remaining_budget, prevRemainingPercentage: response.data.prev_remaining.prev_remaining_percentage } : p
+          p.id === projId ? {
+            ...p,
+            allocatedOverheads: allocatedRows,
+            selectedDynamicOverheads: [
+              ...p.selectedDynamicOverheads,
+              ...allocatedRows
+                .filter(overhead => !isStandardOverhead(overhead))
+                .filter(overhead => !p.selectedDynamicOverheads.some(
+                  selected => Number(selected.id) === Number(overhead.overhead_type_id)
+                ))
+                .map(overhead => ({
+                  id: Number(overhead.overhead_type_id),
+                  expense_name: overhead.expense_name,
+                  is_default: Number(overhead.is_default),
+                })),
+            ],
+            dynamicOverheads: allocatedRows
+              .filter(overhead => !isStandardOverhead(overhead))
+              .reduce((currentValues, overhead) => ({
+                ...currentValues,
+                [overhead.overhead_type_id]: currentValues[overhead.overhead_type_id] || {
+                  value: Number(overhead.total_cost) || 0,
+                  budgetPercentage: Number(overhead.budget_percentage) || 0,
+                },
+              }), p.dynamicOverheads),
+            prevRemainingBudget: response.data.prev_remaining.prev_remaining_budget,
+            prevRemainingPercentage: response.data.prev_remaining.prev_remaining_percentage,
+          } : p
         ));
       }
     } catch (error) {
       console.error("Error fetching allocated:", error);
     }
-  }, [selectedSite, selectedWorkDescription]);
+  }, [selectedSite, selectedWorkDescription, isStandardOverhead]);
   // New: Fetch remaining for projection
   const fetchRemainingBudget = useCallback(async (projId) => {
     if (!selectedSite?.value || !selectedWorkDescription?.value) return;
@@ -1056,11 +1093,223 @@ const canAddProjection = useMemo(() => {
       setIsAllocated(false);
     }
   }, []);
+  const fetchOperationalCostRequests = useCallback(async () => {
+    if (!selectedSite?.value || !selectedWorkDescription?.value || !lastProjection?.id) {
+      setOperationalCostRequests([]);
+      setCanReviewOperationalCostRequests(false);
+      return;
+    }
+    const token = localStorage.getItem("token");
+    if (!token) {
+      setOperationalCostRequests([]);
+      setCanReviewOperationalCostRequests(false);
+      return;
+    }
+    setOperationalCostRequestsLoading(true);
+    try {
+      const [identityResponse, requestsResponse] = await Promise.all([
+        axios.post(`${API_BASE_URL}/auth/verify-token`, { token }),
+        axios.get(`${API_BASE_URL}/projection/operational-cost-requests`, {
+          params: {
+            site_id: selectedSite.value,
+            desc_id: selectedWorkDescription.value,
+            projection_id: lastProjection.id,
+          },
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
+      const role = String(identityResponse.data.role || "").replace(/[\s_-]/g, "").toLowerCase();
+      setCanReviewOperationalCostRequests(["md", "managingdirector"].includes(role));
+      setOperationalCostRequests(requestsResponse.data.data || []);
+    } catch (requestError) {
+      console.error("Error loading Operational Cost requests:", requestError);
+      setOperationalCostRequests([]);
+      setCanReviewOperationalCostRequests(false);
+      Swal.fire({
+        icon: "error",
+        title: "Unable to load requests",
+        text: requestError.response?.data?.message || "Failed to load Operational Cost change requests.",
+      });
+    } finally {
+      setOperationalCostRequestsLoading(false);
+    }
+  }, [selectedSite?.value, selectedWorkDescription?.value, lastProjection?.id]);
+
+  useEffect(() => {
+    fetchOperationalCostRequests();
+  }, [fetchOperationalCostRequests]);
+
+  const raiseOperationalCostRequest = useCallback(async () => {
+    if (!selectedSite?.value || !selectedWorkDescription?.value || !lastProjection?.id) return;
+    const currentCost = Number(existingBudget?.total_budget_value || lastProjection.budgetValue || 0);
+    const poValue = Number(budgetData?.total_po_value || 0);
+    const request = await Swal.fire({
+      title: "Raise Operational Cost concern",
+      html: `<label for="operational-cost-request-value" class="block text-left text-sm font-medium">Requested Operational Cost (₹)</label>
+        <input id="operational-cost-request-value" type="number" min="0.01" max="${poValue}" step="0.01" class="swal2-input" value="${currentCost}">
+        <label for="operational-cost-request-remark" class="block text-left text-sm font-medium">Concern / reason</label>
+        <textarea id="operational-cost-request-remark" class="swal2-textarea" maxlength="2000" placeholder="Explain why this Operational Cost change is needed"></textarea>`,
+      focusConfirm: false,
+      showCancelButton: true,
+      confirmButtonText: "Submit request",
+      confirmButtonColor: "#4f46e5",
+      preConfirm: () => {
+        const requestedCost = Number(document.getElementById("operational-cost-request-value")?.value);
+        const remark = document.getElementById("operational-cost-request-remark")?.value?.trim();
+        if (!Number.isFinite(requestedCost) || requestedCost <= 0 || requestedCost > poValue) {
+          Swal.showValidationMessage(`Enter an amount greater than zero and no more than ₹${poValue.toLocaleString()}.`);
+          return false;
+        }
+        if (!remark) {
+          Swal.showValidationMessage("Enter the concern or reason for this change.");
+          return false;
+        }
+        return { requestedCost, remark };
+      },
+    });
+    if (!request.isConfirmed || !request.value) return;
+
+    const token = localStorage.getItem("token");
+    if (!token) {
+      Swal.fire({ icon: "error", title: "Sign in required", text: "Sign in before raising an Operational Cost request." });
+      return;
+    }
+
+    setOperationalCostRequestSaving(true);
+    try {
+      const response = await axios.post(`${API_BASE_URL}/projection/operational-cost-requests`, {
+        site_id: selectedSite.value,
+        desc_id: selectedWorkDescription.value,
+        projection_id: lastProjection.id,
+        requested_operational_cost: request.value.requestedCost,
+        remark: request.value.remark,
+      }, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await fetchOperationalCostRequests();
+      Swal.fire({ icon: "success", title: "Request submitted", text: response.data.message });
+    } catch (requestError) {
+      Swal.fire({
+        icon: "error",
+        title: "Request not submitted",
+        text: requestError.response?.data?.message || "Failed to submit the Operational Cost request.",
+      });
+    } finally {
+      setOperationalCostRequestSaving(false);
+    }
+  }, [
+    selectedSite?.value,
+    selectedWorkDescription?.value,
+    lastProjection,
+    existingBudget?.total_budget_value,
+    budgetData?.total_po_value,
+    fetchOperationalCostRequests,
+  ]);
+
+  const reviewOperationalCostRequest = useCallback(async (request, decision) => {
+    const decisionLabel = decision === "approved" ? "Approve request" : "Reject request";
+    const review = await Swal.fire({
+      title: decisionLabel,
+      input: "textarea",
+      inputLabel: "MD review remark (optional)",
+      inputAttributes: { maxlength: "1000" },
+      inputPlaceholder: "Add a note for the decision",
+      showCancelButton: true,
+      confirmButtonText: decisionLabel,
+      confirmButtonColor: decision === "approved" ? "#16a34a" : "#dc2626",
+    });
+    if (!review.isConfirmed) return;
+    const mdToken = localStorage.getItem("token");
+    if (!mdToken || !canReviewOperationalCostRequests) {
+      setCanReviewOperationalCostRequests(false);
+      Swal.fire({
+        icon: "error",
+        title: "MD login required",
+        text: "Sign in with a Managing Director account to review this request.",
+      });
+      return;
+    }
+
+    setOperationalCostRequestSaving(true);
+    try {
+      const response = await axios.put(
+        `${API_BASE_URL}/projection/operational-cost-requests/${request.id}/review`,
+        { decision, review_remark: review.value || "" },
+        { headers: { Authorization: `Bearer ${mdToken}` } }
+      );
+      await Promise.all([
+        fetchOperationalCostRequests(),
+        checkBudgetExists(selectedSite.value, selectedWorkDescription.value),
+        fetchAllPoBudgets(selectedSite.value, selectedWorkDescription.value),
+        fetchAllocatedOverheads(request.projection_id),
+        fetchRemainingBudget(request.projection_id),
+      ]);
+      if (existingBudget?.id) await fetchActualBudgetEntries(existingBudget.id);
+      Swal.fire({ icon: "success", title: "Request reviewed", text: response.data.message });
+    } catch (reviewError) {
+      Swal.fire({
+        icon: "error",
+        title: "Review failed",
+        text: reviewError.response?.data?.message || "Failed to review the Operational Cost request.",
+      });
+    } finally {
+      setOperationalCostRequestSaving(false);
+    }
+  }, [
+    canReviewOperationalCostRequests,
+    fetchOperationalCostRequests,
+    checkBudgetExists,
+    fetchAllPoBudgets,
+    fetchAllocatedOverheads,
+    fetchRemainingBudget,
+    selectedSite?.value,
+    selectedWorkDescription?.value,
+    existingBudget?.id,
+    fetchActualBudgetEntries,
+  ]);
   const saveProjectionAllocation = useCallback(async () => {
     if (!allocationEditTarget || !selectedSite?.value || !selectedWorkDescription?.value) return;
     const newCost = Number(allocationEditValue);
     if (!Number.isFinite(newCost) || newCost < 0) {
       Swal.fire({ icon: "error", title: "Invalid amount", text: "Enter a valid non-negative budget amount." });
+      return;
+    }
+
+    const projection = projections.find(item => item.id === allocationEditTarget.projectionId);
+    if (!projection) return;
+    const currentCost = projection.allocatedOverheads.reduce(
+      (sum, allocation) => sum + (
+        Number(allocation.overhead_type_id) === Number(allocationEditTarget.allocation.overhead_type_id)
+          ? Number(allocation.total_cost) || 0
+          : 0
+      ),
+      0
+    );
+    const allocatedTotal = projection.allocatedOverheads.reduce(
+      (sum, allocation) => sum + (Number(allocation.total_cost) || 0),
+      0
+    );
+    const operationalBudget = Number(projection.effectiveBudget) ||
+      (Number(projection.budgetValue) + Number(projection.prevRemainingBudget || 0));
+    const plannedTotal = allocatedTotal - currentCost + newCost;
+    const maximumBudget = Number(budgetData?.total_po_value || 0) +
+      Number(projection.prevRemainingBudget || 0);
+    if (plannedTotal > maximumBudget + 0.009) {
+      Swal.fire({
+        icon: "error",
+        title: "PO Value exceeded",
+        text: `The total allocation cannot exceed the PO Value of ₹${maximumBudget.toLocaleString()}.`,
+        confirmButtonColor: "#4f46e5",
+      });
+      return;
+    }
+    if (plannedTotal > operationalBudget + 0.009) {
+      Swal.fire({
+        icon: "warning",
+        title: "Operational Cost approval required",
+        text: "Raise an Operational Cost change request with a remark. Change this allocation after the Managing Director approves it.",
+        confirmButtonColor: "#4f46e5",
+      });
       return;
     }
 
@@ -1107,6 +1356,7 @@ const canAddProjection = useMemo(() => {
     allocationEditTarget, allocationEditValue, selectedSite, selectedWorkDescription,
     encodedUserId, fetchAllocatedOverheads, fetchRemainingBudget, submissionStatuses,
     existingBudget, fetchActualBudgetEntries, projections,
+    budgetData,
   ]);
   const openAllocationHistory = useCallback(async (projectionId, allocation) => {
     if (!selectedSite?.value || !selectedWorkDescription?.value) return;
@@ -1211,98 +1461,6 @@ const canAddProjection = useMemo(() => {
     handleTotalCostChangeForActive(overallCost);
   }, [overallCost, handleTotalCostChangeForActive]);
 
-  // Updated: addNewProjection - checks budgetAllocated first, then API for submitted
-const addNewProjection = useCallback(async () => {
-  if (projections.length === 0) {
-    // Allow first projection implicitly via initial state
-    return;
-  }
-
-  const lastProjection = projections[projections.length - 1];
-
-  // Check 1: Budget Allocated?
-  if (!lastProjection.budgetAllocated) {
-    Swal.fire({
-      icon: "warning",
-      title: "Allocate Budget First",
-      text: `Please allocate the budget for ${lastProjection.name} (Total % field) before adding a new projection.`,
-      confirmButtonColor: "#4f46e5",
-      footer: '<span class="text-xs text-gray-500">Budget allocation is required for cumulative progression.</span>',
-    });
-    return;
-  }
-
-  if (!selectedSite?.value || !selectedWorkDescription?.value) {
-    Swal.fire({
-      icon: "warning",
-      title: "Incomplete Selection",
-      text: "Please select a site and work description first.",
-      confirmButtonColor: "#4f46e5",
-    });
-    return;
-  }
-
-  try {
-    const response = await axios.get(`${API_BASE_URL}/projection/check-final-submission-status`, {
-      params: { site_id: selectedSite.value, desc_id: selectedWorkDescription.value },
-    });
-
-    if (response.data.success && response.data.data.length > 0) {
-      // Find the last projection from response data
-      const lastStatus = response.data.data.reduce((prev, curr) => 
-        (prev.projection_id || 0) > (curr.projection_id || 0) ? prev : curr
-      );
-      
-      if (lastStatus.submitted) {
-        // Proceed to add new projection
-        const prevProjection = projections[projections.length - 1];
-        const newProjectionId = Math.max(...projections.map(p => p.id)) + 1;
-        const initialPerc = prevProjection.budgetAllocated ? prevProjection.budgetPercentage : "0.00";
-        const newProjection = {
-          ...defaultProjectionTemplate(newProjectionId),
-          budgetPercentage: initialPerc,
-          budgetValue: ((parseFloat(initialPerc) / 100) * (budgetData?.total_po_value || 0)).toFixed(2),
-          isOpen: false,
-          prevRemainingBudget: prevProjection.remainingBudget || 0,
-          prevRemainingPercentage: prevProjection.remainingPercentage || 0
-        };
-        setProjections(prev => [...prev, newProjection]);
-        Swal.fire({
-          icon: "success",
-          title: "Projection Added",
-          text: `New projection "${newProjection.name}" created successfully!`,
-          timer: 2000,
-          showConfirmButton: false,
-          toast: true,
-          background: "#ecfdf5",
-          iconColor: "#10b981",
-        });
-      } else {
-        // Show professional warning
-        Swal.fire({
-          icon: "warning",
-          title: "Finalize Current Projection",
-          text: `Please complete and submit ${lastProjection.name} before adding a new one to ensure accurate cumulative budgeting.`,
-          confirmButtonColor: "#4f46e5",
-          footer: '<span class="text-xs text-gray-500">This maintains the integrity of your projection sequence.</span>',
-        });
-      }
-    } else {
-      // No data, but since budgetAllocated checked, allow if first (edge case)
-      const newProjectionId = Math.max(...projections.map(p => p.id)) + 1;
-      const newProjection = defaultProjectionTemplate(newProjectionId);
-      setProjections(prev => [...prev, newProjection]);
-    }
-  } catch (error) {
-    console.error("Error checking submission status:", error);
-    Swal.fire({
-      icon: "error",
-      title: "API Error",
-      text: "Failed to check projection status. Please try again.",
-      confirmButtonColor: "#4f46e5",
-    });
-  }
-}, [projections, budgetData, defaultProjectionTemplate, selectedSite, selectedWorkDescription]);
   const toggleProjection = useCallback((projectionId) => {
     setProjections(prev => prev.map(p =>
       p.id === projectionId ? { ...p, isOpen: !p.isOpen } : p
@@ -1332,7 +1490,8 @@ const addNewProjection = useCallback(async () => {
       const projIndex = prev.findIndex(p => p.id === projectionId);
       if (projIndex === -1) return prev;
       const proj = { ...prev[projIndex] };
-      const bv = parseFloat(proj.budgetValue) || 0;
+      const bv = parseFloat(proj.effectiveBudget)
+        || (parseFloat(proj.budgetValue) || 0) + (parseFloat(proj.prevRemainingBudget) || 0);
       proj.materialBudgetPercentage = bv > 0 ? (proj.materialTotalCost / bv * 100) : 0;
       const { percentage: labourPerc } = calculateLabourTotalCost(proj);
       proj.labourBudgetPercentage = labourPerc;
@@ -1795,7 +1954,7 @@ const addNewProjection = useCallback(async () => {
       });
     }
   }, [projections, selectedSite, selectedWorkDescription, existingBudget, fetchActualBudgetEntries, budgetData, fetchAllPoBudgets, checkBudgetExists, fetchRemainingBudget, fetchAllocatedOverheads, fetchSubmissionStatuses]);
-  const saveDynamicOverhead = useCallback(async (projectionId, overheadId, overheadName) => {
+  const saveDynamicOverhead = useCallback(async (projectionId, overheadId, overheadName, allocationId) => {
     const projection = projections.find(p => p.id === projectionId);
     if (!projection) return;
     try {
@@ -1832,6 +1991,38 @@ const addNewProjection = useCallback(async () => {
         });
         return;
       }
+      const isSubmitted = submissionStatuses[projectionId]?.submitted || projection.submitted;
+      const existingAllocation = projection.allocatedOverheads.find(
+        allocation => Number(allocation.overhead_type_id) === Number(overheadId)
+      );
+      const allocatedTotal = projection.allocatedOverheads.reduce(
+        (sum, allocation) => sum + (Number(allocation.total_cost) || 0),
+        0
+      );
+      const currentCost = existingAllocation ? Number(existingAllocation.total_cost) || 0 : 0;
+      const plannedTotal = allocatedTotal - currentCost + value;
+      const operationalBudget = Number(projection.effectiveBudget) ||
+        (Number(projection.budgetValue) + Number(projection.prevRemainingBudget || 0));
+      const maximumBudget = Number(budgetData?.total_po_value || 0) +
+        Number(projection.prevRemainingBudget || 0);
+      if (isSubmitted && plannedTotal > maximumBudget + 0.009) {
+        Swal.fire({
+          icon: "error",
+          title: "PO Value exceeded",
+          text: `The total allocation cannot exceed the PO Value of ₹${maximumBudget.toLocaleString()}.`,
+          confirmButtonColor: "#4f46e5",
+        });
+        return;
+      }
+      if (isSubmitted && plannedTotal > operationalBudget + 0.009) {
+        Swal.fire({
+          icon: "warning",
+          title: "Operational Cost approval required",
+          text: "Raise an Operational Cost change request with a remark. The allocation can be changed after the Managing Director approves the request.",
+          confirmButtonColor: "#4f46e5",
+        });
+        return;
+      }
       const payload = {
         site_id: selectedSite.value,
         desc_id: selectedWorkDescription.value,
@@ -1840,18 +2031,39 @@ const addNewProjection = useCallback(async () => {
         overhead_type: overheadName,
         projection_id: projectionId, // Added projection_id
       };
-      const response = await axios.post(`${API_BASE_URL}/projection/save-dynamic-overhead-values`, payload);
+      const response = isSubmitted
+        ? await axios.put(`${API_BASE_URL}/projection/allocated`, {
+            site_id: selectedSite.value,
+            desc_id: selectedWorkDescription.value,
+            projection_id: projectionId,
+            overhead_type_id: overheadId,
+            allocation_id: allocationId,
+            total_cost: value,
+            changed_by: atob(encodedUserId),
+          })
+        : await axios.post(`${API_BASE_URL}/projection/save-dynamic-overhead-values`, payload);
       if (response.data.success) {
         Swal.fire({
           icon: "success",
           title: "Success",
-          text: `${overheadName} overhead saved successfully!`,
+          text: isSubmitted
+            ? allocationId
+              ? `${overheadName} allocation updated and recorded in history.`
+              : `${overheadName} budget head added to this projection and recorded in history.`
+            : `${overheadName} overhead saved successfully!`,
           confirmButtonColor: "#4f46e5",
           timer: 3000,
           timerProgressBar: true,
         });
-        // Fetch updated allocated
-        fetchAllocatedOverheads(projectionId);
+        await Promise.all([
+          fetchAllocatedOverheads(projectionId),
+          ...projections
+            .filter((item) => item.id >= projectionId)
+            .map((item) => fetchRemainingBudget(item.id)),
+        ]);
+        if (isSubmitted && existingBudget?.id) {
+          await fetchActualBudgetEntries(existingBudget.id);
+        }
       } else {
         throw new Error(response.data.message || "Unknown error");
       }
@@ -1872,7 +2084,18 @@ const addNewProjection = useCallback(async () => {
         confirmButtonColor: "#4f46e5",
       });
     }
-  }, [projections, selectedSite, selectedWorkDescription, fetchAllocatedOverheads]);
+  }, [
+    projections,
+    submissionStatuses,
+    selectedSite,
+    selectedWorkDescription,
+    budgetData,
+    encodedUserId,
+    existingBudget,
+    fetchAllocatedOverheads,
+    fetchRemainingBudget,
+    fetchActualBudgetEntries,
+  ]);
   const addNewOverhead = useCallback(async () => {
     const { value: expense_name } = await Swal.fire({
       title: "Add New Overhead",
@@ -2062,7 +2285,7 @@ const addNewProjection = useCallback(async () => {
         if (submissionStatuses[proj.id]?.submitted || proj.submitted) fetchRemainingBudget(proj.id).catch(console.error);
       });
     }
-  }, [selectedSite?.value, selectedWorkDescription?.value, projections.length]);
+  }, [selectedSite?.value, selectedWorkDescription?.value, projections.length, submissionStatuses]);
   // Updated ProjectionAccordion useMemo (add prev remaining display, remove edit/delete in summary, top-right delete only, pre-populate forms with allocated data, no small edit/delete below save)
   const materialOptions = useMemo(() => Array.isArray(materials)
     ? materials.map((material) => ({
@@ -2087,7 +2310,26 @@ const addNewProjection = useCallback(async () => {
       const effectiveBudget = projection.effectiveBudget || (parseFloat(projection.budgetValue || 0) + (projection.prevRemainingBudget || 0));
       const effectiveRemPerc = effectiveBudget > 0 ? ((isSubmitted ? (projection.remainingBudget || 0) : calcRemBudget) / effectiveBudget * 100) : 0;
       const allocOverhead = projection.allocatedOverheads.find(oh => oh.expense_name.toLowerCase() === 'labours') || {};
-      const dynOverhead = projection.allocatedOverheads.find(oh => oh.id === parseInt(projection.activeOverheadTab?.split('-')[1]));
+      const dynOverheadId = Number(projection.activeOverheadTab?.split('-')[1]);
+      const dynOverhead = projection.allocatedOverheads.find(
+        oh => Number(oh.overhead_type_id) === dynOverheadId
+      );
+      const dynamicHeadMap = new Map(
+        projection.selectedDynamicOverheads
+          .filter(overhead => !isStandardOverhead(overhead))
+          .map(overhead => [Number(overhead.id), overhead])
+      );
+      projection.allocatedOverheads
+        .filter(overhead => !isStandardOverhead(overhead))
+        .forEach(overhead => {
+          dynamicHeadMap.set(Number(overhead.overhead_type_id), {
+            id: Number(overhead.overhead_type_id),
+            expense_name: overhead.expense_name,
+            is_default: Number(overhead.is_default),
+            allocation_id: Number(overhead.id),
+          });
+        });
+      const dynamicHeads = [...dynamicHeadMap.values()];
       const isFormEnabled = selectedCompany && selectedProject && selectedSite && selectedWorkDescription && projection.id && !isSubmitted;
       return (
         <div key={projection.id} className="border border-gray-200 rounded-xl mb-6 shadow-sm hover:shadow-md transition-shadow duration-200 bg-white">
@@ -2217,7 +2459,7 @@ const addNewProjection = useCallback(async () => {
                     {[
                       { key: "material", label: "Material", icon: "📦" },
                       { key: "labour", label: "Labour", icon: "👥" },
-                      ...projection.selectedDynamicOverheads.map((overhead) => ({
+                      ...dynamicHeads.map((overhead) => ({
                         key: `overhead-${overhead.id}`,
                         label: overhead.expense_name,
                         icon: "⚙️",
@@ -2247,8 +2489,8 @@ const addNewProjection = useCallback(async () => {
                           title: "Select Overhead",
                           input: "select",
                           inputOptions: overheads
-                            .filter((oh) => oh.is_default === 0)
-                            .filter((oh) => !projection.selectedDynamicOverheads.some((selected) => selected.id === oh.id))
+                            .filter((oh) => !isStandardOverhead(oh))
+                            .filter((oh) => !dynamicHeads.some((selected) => Number(selected.id) === Number(oh.id)))
                             .reduce((options, overhead) => {
                               options[overhead.id] = overhead.expense_name;
                               return options;
@@ -2665,8 +2907,31 @@ const addNewProjection = useCallback(async () => {
                       )}
                     </div>
                   )}
-                  {projection.selectedDynamicOverheads.map((overhead) => (
-                    projection.activeOverheadTab === `overhead-${overhead.id}` && (
+                  {dynamicHeads.map((overhead) => {
+                    const savedAllocation = projection.allocatedOverheads.find(
+                      allocation => Number(allocation.overhead_type_id) === Number(overhead.id)
+                    );
+                    const overheadValue = Number(
+                      projection.dynamicOverheads[overhead.id]?.value ?? savedAllocation?.total_cost ?? 0
+                    );
+                    const availableRemaining = Math.max(
+                      Number(projection.remainingBudget ?? calcRemBudget) || 0,
+                      0
+                    );
+                    const allocatedTotal = projection.allocatedOverheads.reduce(
+                      (sum, allocation) => sum + (Number(allocation.total_cost) || 0),
+                      0
+                    );
+                    const operationalBudget = Number(projection.effectiveBudget) ||
+                      (Number(projection.budgetValue) + Number(projection.prevRemainingBudget || 0));
+                    const plannedTotal = allocatedTotal -
+                      (Number(savedAllocation?.total_cost) || 0) +
+                      overheadValue;
+                    const requiresReserveApproval = isSubmitted && plannedTotal > operationalBudget + 0.009;
+                    const exceedsPoValue = plannedTotal >
+                      Number(budgetData?.total_po_value || 0) + Number(projection.prevRemainingBudget || 0) + 0.009;
+                    const exceedsUnsubmittedBudget = !isSubmitted && plannedTotal > operationalBudget + 0.009;
+                    return projection.activeOverheadTab === `overhead-${overhead.id}` ? (
                       <div key={overhead.id} className="p-6 bg-gray-50 rounded-xl mb-6 relative">
                         <h4 className="text-xl font-semibold mb-6 flex items-center space-x-2 text-indigo-800">
                           <span>⚙️</span>
@@ -2688,17 +2953,32 @@ const addNewProjection = useCallback(async () => {
                             </label>
                             <input
                               type="number"
-                              value={projection.dynamicOverheads[overhead.id]?.value || ""}
+                              value={projection.dynamicOverheads[overhead.id]?.value ?? savedAllocation?.total_cost ?? ""}
                               onChange={(e) =>
                                 calculateDynamicOverheadBudgetPercentage(projection.id, overhead.id, e.target.value)
                               }
-                              disabled={isSubmitted}
+                              disabled={!isFormEnabled && !isSubmitted}
                               className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100"
                               placeholder={`Enter ${overhead.expense_name} value`}
                             />
                             <p className="text-sm text-gray-600 mt-1">
-                              Remaining Budget: ₹{calcRemBudget.toLocaleString()}
+                              Remaining Budget: ₹{availableRemaining.toLocaleString()}
                             </p>
+                            {requiresReserveApproval && (
+                              <p className="text-sm text-red-600 mt-1" role="alert">
+                                Raise an Operational Cost change request with a remark. The MD must approve it before this allocation can use the reserved fund.
+                              </p>
+                            )}
+                            {exceedsUnsubmittedBudget && (
+                              <p className="text-sm text-red-600 mt-1" role="alert">
+                                Amount exceeds the available Operational Cost. Remaining budget is ₹{availableRemaining.toLocaleString()}.
+                              </p>
+                            )}
+                            {exceedsPoValue && (
+                              <p className="text-sm text-red-600 mt-1" role="alert">
+                                Allocation cannot exceed the PO Value.
+                              </p>
+                            )}
                           </div>
                           <div>
                             <label className="block text-sm font-medium mb-2">Budget Percentage</label>
@@ -2710,17 +2990,20 @@ const addNewProjection = useCallback(async () => {
                             />
                           </div>
                         </div>
-                        {!isSubmitted && (
+                        {isFormEnabled || isSubmitted ? (
                           <button
-                            onClick={() => saveDynamicOverhead(projection.id, overhead.id, overhead.expense_name)}
+                            onClick={() => saveDynamicOverhead(projection.id, overhead.id, overhead.expense_name, overhead.allocation_id)}
                             className="px-8 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-semibold rounded-lg hover:from-indigo-700 hover:to-purple-700 shadow-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            disabled={exceedsPoValue || exceedsUnsubmittedBudget}
                           >
-                            Save {overhead.expense_name} Overhead
+                            {isSubmitted
+                              ? `${overhead.allocation_id ? "Update" : "Add"} ${overhead.expense_name} Allocation`
+                              : `Save ${overhead.expense_name} Overhead`}
                           </button>
-                        )}
+                        ) : null}
                       </div>
-                    )
-                  ))}
+                    ) : null;
+                  })}
                  <div className="mt-8 p-6 bg-gradient-to-r from-indigo-50 to-blue-50 rounded-xl border border-indigo-200">
         <h4 className="text-xl font-semibold mb-6 text-indigo-800">Budget Allocation Summary</h4>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -2784,7 +3067,7 @@ const addNewProjection = useCallback(async () => {
         </div>
       );
     }),
-    [projections, toggleProjection, budgetData, loading, savePoBudget, updateProjectionField, overheads, handleSelectOverhead, addNewOverhead, handleLabourCalculationTypeChange, handleNoOfLaboursChange, handleTotalShiftsChange, handleRatePerShiftChange, saveLabourOverhead, handleRemoveOverhead, calculateDynamicOverheadBudgetPercentage, calculateRemainingBudget, saveDynamicOverhead, finalSubmissionProjection, selectedCompany, selectedProject, selectedSite, selectedWorkDescription, existingBudget, saveMaterialAllocation, calculateLabourTotalCost, recalculateAllPercentages, fetchAllocatedOverheads, fetchRemainingBudget, submissionStatuses, deleteOverhead, handleSubmit, materialOptions, uomOptions, handleEditAssignment, handleDeleteAssignment, handleAddMaterial, handleMaterialChange, handleItemSelect, handleRemoveMaterial, calculateCompQuantities, calculateTotalCost, overallCost, overallPercentage, materialError, materialLoading, addingMaterial, CustomCreateLabel, openAllocationHistory]
+    [projections, toggleProjection, budgetData, loading, savePoBudget, updateProjectionField, overheads, handleSelectOverhead, addNewOverhead, handleLabourCalculationTypeChange, handleNoOfLaboursChange, handleTotalShiftsChange, handleRatePerShiftChange, saveLabourOverhead, handleRemoveOverhead, calculateDynamicOverheadBudgetPercentage, calculateRemainingBudget, saveDynamicOverhead, finalSubmissionProjection, selectedCompany, selectedProject, selectedSite, selectedWorkDescription, existingBudget, saveMaterialAllocation, calculateLabourTotalCost, recalculateAllPercentages, fetchAllocatedOverheads, fetchRemainingBudget, submissionStatuses, deleteOverhead, handleSubmit, materialOptions, uomOptions, handleEditAssignment, handleDeleteAssignment, handleAddMaterial, handleMaterialChange, handleItemSelect, handleRemoveMaterial, calculateCompQuantities, calculateTotalCost, overallCost, overallPercentage, materialError, materialLoading, addingMaterial, CustomCreateLabel, openAllocationHistory, isStandardOverhead]
   );
   const addedOverheads = useMemo(() => overheads.filter(o => o.is_default === 0), [overheads]);
   return (
@@ -2923,7 +3206,8 @@ const addNewProjection = useCallback(async () => {
                   Budget Information
                 </h4>
                 <p className="text-sm text-gray-900">PO Value: ₹{budgetData.total_po_value.toLocaleString()}</p>
-                <p className="text-sm text-gray-900">Existing Budget Value: {existingBudget ? `₹${parseFloat(existingBudget.total_budget_value).toLocaleString()}` : "Not set"}</p>
+                <p className="text-sm text-gray-900">Operational Cost: {existingBudget ? `₹${parseFloat(existingBudget.total_budget_value).toLocaleString()}` : "Not set"}</p>
+                <p className="text-sm text-gray-900">Reserved Fund: {existingBudget ? `₹${(Number(budgetData.total_po_value) - (Number(existingBudget.total_budget_value) || 0)).toLocaleString()}` : "Not set"}</p>
               </div>
               <div className="p-4 bg-gray-50 rounded-lg">
                 <h4 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">
@@ -2933,20 +3217,105 @@ const addNewProjection = useCallback(async () => {
                 <p className="text-sm text-gray-900">Allocated Overheads: {allocatedOverheads.length}</p>
               </div>
             </div>
+            {existingBudget && lastProjection && (
+              <section className="mt-6 rounded-xl border border-indigo-200 bg-indigo-50 p-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-indigo-950">Operational Cost change requests</h3>
+                    <p className="mt-1 text-sm text-indigo-800">
+                      Requests can be raised when the remaining balance is zero or positive. After submission, any increase or reduction needs a remark and MD approval.
+                    </p>
+                  </div>
+                  {submissionStatuses[lastProjection.id]?.submitted || lastProjection.submitted ? (
+                    <button
+                      type="button"
+                      onClick={raiseOperationalCostRequest}
+                      disabled={operationalCostRequestSaving || operationalCostRequests.some(request => request.status === "pending")}
+                      className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {operationalCostRequests.some(request => request.status === "pending")
+                        ? "Request pending MD review"
+                        : "Raise change request"}
+                    </button>
+                  ) : (
+                    <p className="rounded-lg bg-white px-3 py-2 text-sm text-gray-600">
+                      Submit the projection before requesting a change.
+                    </p>
+                  )}
+                </div>
+                {operationalCostRequestsLoading ? (
+                  <div className="mt-4 flex items-center gap-2 text-sm text-gray-600">
+                    <Loader2 className="animate-spin" size={16} /> Loading change requests...
+                  </div>
+                ) : operationalCostRequests.length > 0 ? (
+                  <div className="mt-4 space-y-3">
+                    {operationalCostRequests.map(request => (
+                      <article key={request.id} className="rounded-lg border border-white bg-white p-4 shadow-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="font-semibold text-gray-900">
+                            ₹{Number(request.previous_operational_cost).toLocaleString()} → ₹{Number(request.requested_operational_cost).toLocaleString()}
+                          </p>
+                          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                            request.status === "approved"
+                              ? "bg-green-100 text-green-800"
+                              : request.status === "rejected"
+                                ? "bg-red-100 text-red-800"
+                                : "bg-amber-100 text-amber-800"
+                          }`}>
+                            {request.status.toUpperCase()}
+                          </span>
+                        </div>
+                        <p className="mt-2 whitespace-pre-wrap text-sm text-gray-700">{request.remark}</p>
+                        <p className="mt-2 text-xs text-gray-500">
+                          Raised by {request.requested_by_name || `User #${request.requested_by}`}
+                          {" · "}{new Date(request.created_at).toLocaleString()}
+                          {request.reviewed_by_name ? ` · Reviewed by ${request.reviewed_by_name}` : ""}
+                        </p>
+                        {request.review_remark && (
+                          <p className="mt-2 text-sm text-gray-600">
+                            MD note: {request.review_remark}
+                          </p>
+                        )}
+                        {request.status === "pending" && canReviewOperationalCostRequests && (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => reviewOperationalCostRequest(request, "approved")}
+                              disabled={operationalCostRequestSaving}
+                              className="rounded-md bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                            >
+                              Approve (MD login)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => reviewOperationalCostRequest(request, "rejected")}
+                              disabled={operationalCostRequestSaving}
+                              className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                            >
+                              Reject (MD login)
+                            </button>
+                          </div>
+                        )}
+                        {request.status === "pending" && !canReviewOperationalCostRequests && (
+                          <p className="mt-3 text-sm text-amber-700">
+                            Only a user signed in with a Managing Director account can approve or reject this request.
+                          </p>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-4 rounded-lg bg-white p-4 text-sm text-gray-600">
+                    No Operational Cost change requests for this projection.
+                  </p>
+                )}
+              </section>
+            )}
           </div>
         )}
         {budgetData && (
           <div className="bg-white rounded-xl shadow-lg p-8 mb-8">
-      <div className="flex items-center justify-between mb-6">
-  <h2 className="text-2xl font-semibold text-gray-800">Overhead Allocation Projections</h2>
-  <button
-    onClick={addNewProjection}
-    className="flex items-center px-6 py-3 font-semibold rounded-full transition-all duration-200 bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:shadow-lg hover:scale-105 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-  >
-    <PlusCircle className="mr-2" size={20} />
-    Add New Projection
-  </button>
-</div>
+      <h2 className="text-2xl font-semibold text-gray-800 mb-6">Overhead Allocation Projections</h2>
             {ProjectionAccordion}
           </div>
         )}
@@ -3158,7 +3527,7 @@ const addNewProjection = useCallback(async () => {
               autoFocus
             />
             <p className="mt-2 text-xs text-gray-500">
-              If the change exceeds the remaining budget, the difference will be transferred from other heads with available unspent allocation.
+              Allocation changes cannot exceed the approved Operational Cost. Request a post-submission Operational Cost change with a remark; the MD must approve it before it takes effect. Spent amounts cannot be reduced.
             </p>
             <div className="mt-6 flex justify-end gap-3">
               <button
@@ -3229,6 +3598,12 @@ const addNewProjection = useCallback(async () => {
                       {Number(entry.previous_budget_percentage).toFixed(2)}% → {Number(entry.new_budget_percentage).toFixed(2)}%
                       {" · "}Changed by {entry.changed_by || "Unknown"}
                     </p>
+                    {Number(entry.reserved_fund_change) > 0 && (
+                      <p className="mt-1 text-sm font-medium text-amber-700">
+                        Reserved fund used: ₹{Number(entry.reserved_fund_change).toLocaleString()}
+                        {" · "}Approved by MD #{entry.approved_by}
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
