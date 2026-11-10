@@ -160,7 +160,7 @@ exports.getCompletionEntries = async (req, res) => {
     const entriesWithEditable = entries.map(entry => {
       const createdTime = new Date(entry.created_at);
       const hoursDiff = (now - createdTime) / (1000 * 60 * 60);
-      const isEditable = hoursDiff <= 48;
+      const isEditable = hoursDiff <= 200;
       return {
         ...entry,
         is_editable: isEditable
@@ -437,17 +437,17 @@ exports.updateCompletionEntry = async (req, res) => {
 
     const currentEntry = existingEntry[0];
 
-    // Check 48-hour window from created_at
+    // Check 200-hour window from created_at
     const createdTime = new Date(currentEntry.created_at);
     const now = new Date();
     const hoursDiff = (now - createdTime) / (1000 * 60 * 60);
     
     console.log(`Time difference for entry ${entryId}: ${hoursDiff.toFixed(1)} hours`);
     
-    if (hoursDiff > 48) {
+    if (hoursDiff > 200) {
       return res.status(400).json({
         status: 'error',
-        message: `Cannot update completion entry. More than 48 hours have passed since creation (${hoursDiff.toFixed(1)} hours).`
+        message: `Cannot update completion entry. More than 200 hours have passed since creation (${hoursDiff.toFixed(1)} hours).`
       });
     }
 
@@ -631,11 +631,11 @@ exports.deleteCompletionEntry = async (req, res) => {
 
     const entry = entryRows[0];
     const hoursSinceCreation = (Date.now() - new Date(entry.created_at).getTime()) / 3600000;
-    if (hoursSinceCreation > 48) {
+    if (hoursSinceCreation > 200) {
       await connection.rollback();
       return res.status(400).json({
         status: 'error',
-        message: 'Cannot delete this completion entry because more than 48 hours have passed.'
+        message: 'Cannot delete this completion entry because more than 200 hours have passed.'
       });
     }
 
@@ -995,17 +995,17 @@ exports.updateMaterialAcknowledgement = async (req, res) => {
 
     const currentAck = existingAck[0];
 
-    // Check 48-hour window from created_at or last updated_at
+    // Check 200-hour window from created_at or last updated_at
     const lastUpdateTime = new Date(Math.max(new Date(currentAck.created_at), new Date(currentAck.updated_at || currentAck.created_at)));
     const now = new Date();
     const hoursDiff = (now - lastUpdateTime) / (1000 * 60 * 60);
     
     console.log(`Time difference: ${hoursDiff.toFixed(1)} hours`);
     
-    if (hoursDiff > 48) {
+    if (hoursDiff > 200) {
       return res.status(400).json({
         status: 'error',
-        message: `Cannot update acknowledgement. More than 48 hours have passed since creation/update (${hoursDiff.toFixed(1)} hours).`
+        message: `Cannot update acknowledgement. More than 200 hours have passed since creation/update (${hoursDiff.toFixed(1)} hours).`
       });
     }
 
@@ -1136,7 +1136,7 @@ exports.getAcknowledgementDetails = async (req, res) => {
     const data = rows.map(row => {
       const lastUpdateTime = new Date(Math.max(new Date(row.ack_created_at), new Date(row.ack_updated_at)));
       const hoursDiff = (now - lastUpdateTime) / (1000 * 60 * 60);
-      const isEditable = hoursDiff <= 48;
+      const isEditable = hoursDiff <= 200;
 
       return {
         id: row.ack_id,
@@ -1399,17 +1399,17 @@ exports.updateMaterialUsageEntry = async (req, res) => {
 
     const currentEntry = existingEntry[0];
 
-    // Check 48-hour window from created_at or last updated_at
+    // Check 200-hour window from created_at or last updated_at
     const lastUpdateTime = new Date(Math.max(new Date(currentEntry.created_at), new Date(currentEntry.updated_at || currentEntry.created_at)));
     const now = new Date();
     const hoursDiff = (now - lastUpdateTime) / (1000 * 60 * 60);
     
     console.log(`Time difference for entry ${entryId}: ${hoursDiff.toFixed(1)} hours`);
     
-    if (hoursDiff > 48) {
+    if (hoursDiff > 200) {
       return res.status(400).json({
         status: 'error',
-        message: `Cannot update material usage entry. More than 48 hours have passed since creation/update (${hoursDiff.toFixed(1)} hours).`
+        message: `Cannot update material usage entry. More than 200 hours have passed since creation/update (${hoursDiff.toFixed(1)} hours).`
       });
     }
 
@@ -1579,7 +1579,7 @@ exports.getMaterialUsageDetails = async (req, res) => {
     const entriesWithEditable = entries.map(entry => {
       const lastUpdateTime = new Date(Math.max(new Date(entry.created_at), new Date(entry.updated_at || entry.created_at)));
       const hoursDiff = (now - lastUpdateTime) / (1000 * 60 * 60);
-      const isEditable = hoursDiff <= 48;
+      const isEditable = hoursDiff <= 200;
       return {
         ...entry,
         is_editable: isEditable
@@ -1703,12 +1703,12 @@ exports.getAssignedLabours = async (req, res) => {
       [project_id, site_id, desc_id]
     );
 
-    // Add is_editable flag to each labour based on 48-hour window from created_at
+    // Add is_editable flag to each labour based on 200-hour window from created_at
     const now = new Date();
     const laboursWithEditable = labours.map(labour => {
       const createdTime = new Date(labour.created_at);
       const hoursDiff = (now - createdTime) / (1000 * 60 * 60);
-      const isEditable = hoursDiff <= 48;
+      const isEditable = hoursDiff <= 200;
       return {
         ...labour,
         is_editable: isEditable
@@ -1798,13 +1798,13 @@ exports.saveLabourAttendance = async (req, res) => {
 
         const currentAttendance = existingAttendance[0];
 
-        // Check 48-hour window
+        // Check 200-hour window
         const lastUpdateTime = new Date(Math.max(new Date(currentAttendance.created_at), new Date(currentAttendance.updated_at || currentAttendance.created_at)));
         const hoursDiff = (now - lastUpdateTime) / (1000 * 60 * 60);
-        if (hoursDiff > 48) {
+        if (hoursDiff > 200) {
           return res.status(400).json({
             status: 'error',
-            message: `Cannot update attendance entry ${attendanceId}. More than 48 hours have passed since creation/update (${hoursDiff.toFixed(1)} hours).`
+            message: `Cannot update attendance entry ${attendanceId}. More than 200 hours have passed since creation/update (${hoursDiff.toFixed(1)} hours).`
           });
         }
 
@@ -2072,17 +2072,17 @@ exports.updateLabourAssignment = async (req, res) => {
 
     const currentAssignment = existingAssignment[0];
 
-    // Check 48-hour window from created_at (or updated_at if exists)
+    // Check 200-hour window from created_at (or updated_at if exists)
     const lastUpdateTime = new Date(Math.max(new Date(currentAssignment.created_at), new Date(currentAssignment.updated_at || currentAssignment.created_at)));
     const now = new Date();
     const hoursDiff = (now - lastUpdateTime) / (1000 * 60 * 60);
     
     console.log(`Time difference for assignment ${assignmentId}: ${hoursDiff.toFixed(1)} hours`);
     
-    if (hoursDiff > 48) {
+    if (hoursDiff > 200) {
       return res.status(400).json({
         status: 'error',
-        message: `Cannot update labour assignment. More than 48 hours have passed since creation/update (${hoursDiff.toFixed(1)} hours).`
+        message: `Cannot update labour assignment. More than 200 hours have passed since creation/update (${hoursDiff.toFixed(1)} hours).`
       });
     }
 
@@ -2221,7 +2221,7 @@ exports.getLabourAttendance = async (req, res) => {
       if (labour.attendance_id) {
         const lastUpdateTime = new Date(Math.max(new Date(labour.created_at), new Date(labour.updated_at || labour.created_at)));
         const hoursDiff = (now - lastUpdateTime) / (1000 * 60 * 60);
-        const isEditable = hoursDiff <= 48;
+        const isEditable = hoursDiff <= 200;
         return {
           ...labour,
           is_editable: isEditable
@@ -2339,7 +2339,7 @@ exports.getBudgetExpenseDetails = async (req, res) => {
     const entriesWithEditable = entries.map(entry => {
       const lastUpdateTime = new Date(Math.max(new Date(entry.created_at), new Date(entry.updated_at || entry.created_at)));
       const hoursDiff = (now - lastUpdateTime) / (1000 * 60 * 60);
-      const isEditable = hoursDiff <= 48;
+      const isEditable = hoursDiff <= 200;
       return {
         ...entry,
         is_editable: isEditable
@@ -2688,18 +2688,18 @@ exports.updateBudgetExpenseEntry = async (req, res) => {
 
     const currentEntry = existingEntry[0];
 
-    // Check 48-hour window from created_at or last updated_at
+    // Check 200-hour window from created_at or last updated_at
     const lastUpdateTime = new Date(Math.max(new Date(currentEntry.created_at), new Date(currentEntry.updated_at || currentEntry.created_at)));
     const now = new Date();
     const hoursDiff = (now - lastUpdateTime) / (1000 * 60 * 60);
     
     console.log(`Time difference for entry ${entryId}: ${hoursDiff.toFixed(1)} hours`);
     
-    if (hoursDiff > 48) {
+    if (hoursDiff > 200) {
       await connection.rollback();
       return res.status(400).json({
         status: 'error',
-        message: `Cannot update budget expense entry. More than 48 hours have passed since creation/update (${hoursDiff.toFixed(1)} hours).`
+        message: `Cannot update budget expense entry. More than 200 hours have passed since creation/update (${hoursDiff.toFixed(1)} hours).`
       });
     }
 
@@ -4691,7 +4691,7 @@ exports.viewAllLabourAttendance = async (req, res) => {
 
 
 
-// Admin update completion entry (no 48-hour check)
+// Admin update completion entry (no 200-hour check)
 exports.adminUpdateCompletionEntry = async (req, res) => {
   try {
     const { entry_id, area_added, remarks, updated_by } = req.body;
@@ -4899,7 +4899,7 @@ exports.adminUpdateCompletionEntry = async (req, res) => {
   }
 };
 
-// Admin update material acknowledgement (no 48-hour check)
+// Admin update material acknowledgement (no 200-hour check)
 exports.adminUpdateMaterialAcknowledgement = async (req, res) => {
   try {
     const { ack_id, overall_quantity, remarks, updated_by } = req.body;
@@ -5043,7 +5043,7 @@ exports.adminUpdateMaterialAcknowledgement = async (req, res) => {
   }
 };
 
-// Admin update material usage entry (no 48-hour check)
+// Admin update material usage entry (no 200-hour check)
 exports.adminUpdateMaterialUsageEntry = async (req, res) => {
   try {
     const { entry_id, overall_qty, remarks, updated_by } = req.body;
@@ -5237,7 +5237,7 @@ exports.adminUpdateMaterialUsageEntry = async (req, res) => {
   }
 };
 
-// Admin update labour assignment (no 48-hour check)
+// Admin update labour assignment (no 200-hour check)
 exports.adminUpdateLabourAssignment = async (req, res) => {
   try {
     const { assignment_id, from_date, to_date, salary, updated_by } = req.body;
@@ -5384,7 +5384,7 @@ exports.adminUpdateLabourAssignment = async (req, res) => {
   }
 };
 
-// Admin update budget expense entry (no 48-hour check)
+// Admin update budget expense entry (no 200-hour check)
 exports.adminUpdateBudgetExpenseEntry = async (req, res) => {
   try {
     const {
@@ -5611,7 +5611,7 @@ exports.adminUpdateBudgetExpenseEntry = async (req, res) => {
   }
 };
 
-// Admin save labour attendance (no 48-hour check for updates)
+// Admin save labour attendance (no 200-hour check for updates)
 exports.adminSaveLabourAttendance = async (req, res) => {
   try {
     const { attendance_data, created_by } = req.body;
@@ -5662,7 +5662,7 @@ exports.adminSaveLabourAttendance = async (req, res) => {
       }
 
       if (attendance_id) {
-        // Update existing attendance (no 48-hour check for admin)
+        // Update existing attendance (no 200-hour check for admin)
         const attendanceId = parseInt(attendance_id);
         if (isNaN(attendanceId)) {
           return res.status(400).json({ status: 'error', message: 'attendance_id must be a number for updates' });
