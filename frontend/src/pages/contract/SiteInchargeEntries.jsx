@@ -926,15 +926,8 @@ const handleAdminUpdate = async (type, updatedData) => {
         ) : (
           filteredData.map((item, index) => (
             <div key={index} className="border border-gray-200 rounded-xl p-6 bg-white shadow-sm hover:shadow-md transition-shadow duration-200 relative">
-              <button
-                onClick={() => openEditModal("completion", { entry_id: item.completion.entry_id, area_added: item.completion.area_completed, remarks: item.completion.remarks })}
-                className="absolute top-2 right-2 p-1 text-blue-500 hover:text-blue-700"
-                title="Edit Completion"
-              >
-                <Edit size={16} />
-              </button>
               {/* Completion Details */}
-              <div className="mb-6 p-5 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-100">
+              <div className={`mb-6 rounded-lg border p-5 ${Number(item.completion.area_completed) > Number(item.completion.assigned_quantity) ? "border-red-300 bg-red-50" : "border-green-100 bg-gradient-to-r from-green-50 to-emerald-50"}`}>
                 <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
                   <span className="w-2 h-2 bg-green-500 rounded-full mr-3"></span>
                   Completion Details
@@ -958,11 +951,14 @@ const handleAdminUpdate = async (type, updatedData) => {
                   </div>
                   <div className="flex flex-col">
                     <span className="text-xs font-medium text-gray-500 mb-1">Area Completed</span>
-                    <span className="font-medium text-gray-800">{item.completion.area_completed || "N/A"}</span>
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-xs font-medium text-gray-500 mb-1">Rate</span>
-                    <span className="font-medium text-gray-800">{item.completion.rate || "N/A"}</span>
+                    <span className={`font-semibold ${Number(item.completion.area_completed) > Number(item.completion.assigned_quantity) ? "text-red-700" : "text-gray-800"}`}>
+                      {item.completion.area_completed || "N/A"} / {item.completion.assigned_quantity || 0} assigned
+                    </span>
+                    {Number(item.completion.area_completed) > Number(item.completion.assigned_quantity) && (
+                      <span className="mt-1 text-xs font-semibold text-red-700">
+                        Over assigned quantity by {(Number(item.completion.area_completed) - Number(item.completion.assigned_quantity)).toFixed(2)}
+                      </span>
+                    )}
                   </div>
                   <div className="flex flex-col">
                     <span className="text-xs font-medium text-gray-500 mb-1">Value</span>
@@ -1000,7 +996,7 @@ const handleAdminUpdate = async (type, updatedData) => {
                   </h3>
                   <div className="space-y-4">
                     {item.entries_history.map((entry, entryIndex) => (
-                      <div key={entryIndex} className="p-4 bg-white border border-gray-200 rounded-lg shadow-xs relative">
+                      <div key={entryIndex} className={`relative rounded-lg border p-4 shadow-xs ${Number(item.completion.area_completed) > Number(item.completion.assigned_quantity) ? "border-red-300 bg-red-50" : "border-gray-200 bg-white"}`}>
                         <button
                           onClick={() => openEditModal("completion", { entry_id: entry.entry_id, area_added: entry.area_added, remarks: entry.remarks })}
                           className="absolute top-2 right-2 p-1 text-blue-500 hover:text-blue-700"
@@ -1031,10 +1027,6 @@ const handleAdminUpdate = async (type, updatedData) => {
                               <span className="font-medium text-gray-800">{entry.area_added || "N/A"}</span>
                             </div>
                             <div className="flex flex-col">
-                              <span className="text-xs font-medium text-gray-500 mb-1">Rate</span>
-                              <span className="font-medium text-gray-800">{entry.rate || "N/A"}</span>
-                            </div>
-                            <div className="flex flex-col">
                               <span className="text-xs font-medium text-gray-500 mb-1">Value Added</span>
                               <span className="font-medium text-gray-800">{entry.value_added || "N/A"}</span>
                             </div>
@@ -1051,6 +1043,33 @@ const handleAdminUpdate = async (type, updatedData) => {
                               <span className="text-gray-700">{formatDateTime(entry.created_at)}</span>
                             </div>
                           </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {item.entry_change_history?.length > 0 && (
+                <div className="mt-4 rounded-lg border border-purple-200 bg-purple-50 p-5">
+                  <h3 className="mb-4 text-lg font-semibold text-gray-800">Completion Entry Change History</h3>
+                  <div className="space-y-3">
+                    {item.entry_change_history.map(change => (
+                      <div key={change.id} className="rounded-md border border-purple-100 bg-white p-3 text-sm">
+                        <div className="font-semibold text-gray-800">
+                          {change.action === "DELETE" ? "Entry deleted" : "Entry edited"} · Entry #{change.entry_id}
+                        </div>
+                        <div className="mt-1 text-gray-700">
+                          Quantity: {Number(change.old_area_added).toFixed(2)}
+                          {change.action === "UPDATE" && ` → ${Number(change.new_area_added).toFixed(2)}`}
+                        </div>
+                        {change.action === "UPDATE" && (
+                          <div className="text-gray-600">
+                            Remarks: {change.old_remarks || "—"} → {change.new_remarks || "—"}
+                          </div>
+                        )}
+                        <div className="mt-1 text-xs text-gray-500">
+                          Changed by {change.changed_by_user_name || "Unknown"} · {formatDateTime(change.created_at)}
                         </div>
                       </div>
                     ))}
@@ -1084,10 +1103,6 @@ const handleAdminUpdate = async (type, updatedData) => {
                           <div className="flex flex-col">
                             <span className="text-xs font-medium text-gray-500 mb-1">Area Completed</span>
                             <span className="font-medium text-gray-800">{edit.area_completed || "N/A"}</span>
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-xs font-medium text-gray-500 mb-1">Rate</span>
-                            <span className="font-medium text-gray-800">{edit.rate || "N/A"}</span>
                           </div>
                           <div className="flex flex-col">
                             <span className="text-xs font-medium text-gray-500 mb-1">Value</span>

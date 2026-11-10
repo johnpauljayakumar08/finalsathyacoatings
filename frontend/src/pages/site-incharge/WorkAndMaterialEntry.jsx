@@ -2,7 +2,7 @@ import { API_BASE_URL } from "../../config/api.js";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import Select from "react-select";
-import { FileText, Save, HardHat, Pencil, Plus, X } from "lucide-react";
+import { FileText, Save, HardHat, Pencil, Plus, X, Trash2 } from "lucide-react";
 import { ToastContainer, toast } from "react-toastify";
 import { useParams } from "react-router-dom";
 
@@ -23,6 +23,9 @@ const WorkAndMaterialEntry = () => {
   const [workRecords, setWorkRecords] = useState([]);
   const [completionData, setCompletionData] = useState({});
   const [completionInputs, setCompletionInputs] = useState({});
+  const [editingCompletionEntry, setEditingCompletionEntry] = useState(null);
+  const [completionEditInputs, setCompletionEditInputs] = useState({});
+  const [savingCompletionEdit, setSavingCompletionEdit] = useState(false);
   const [dispatches, setDispatches] = useState([]);
   const [usageData, setUsageData] = useState({});
   const [usageInputs, setUsageInputs] = useState({});
@@ -326,6 +329,60 @@ const WorkAndMaterialEntry = () => {
       ...previous,
       [recId]: { ...previous[recId], [field]: value }
     }));
+  };
+
+  const updateCompletionEditInput = (field, value) => {
+    setCompletionEditInputs(previous => ({ ...previous, [field]: value }));
+  };
+
+  const beginCompletionEdit = (entry) => {
+    setEditingCompletionEntry({ entryId: entry.entry_id });
+    setCompletionEditInputs({
+      area_added: String(entry.area_added ?? ""),
+      remarks: entry.remarks || ""
+    });
+  };
+
+  const saveCompletionEdit = async () => {
+    const area = Number(completionEditInputs.area_added);
+    const remarks = (completionEditInputs.remarks || "").trim();
+    if (!Number.isFinite(area) || area < 0 || !remarks) {
+      toast.error("Enter a valid non-negative quantity and remarks");
+      return;
+    }
+
+    setSavingCompletionEdit(true);
+    try {
+      await axios.put(`${API}/site-incharge/update-completion-entry`, {
+        entry_id: editingCompletionEntry.entryId,
+        area_added: area,
+        remarks,
+        updated_by: userId
+      });
+      toast.success("Work completion entry updated");
+      setEditingCompletionEntry(null);
+      setCompletionEditInputs({});
+      await loadCompletionHistory(workRecords);
+    } catch (error) {
+      console.error("Failed to edit work completion:", error);
+      toast.error(error.response?.data?.message || "Failed to edit work completion");
+    } finally {
+      setSavingCompletionEdit(false);
+    }
+  };
+
+  const deleteCompletion = async (entry) => {
+    if (!window.confirm("Delete this work completion entry? This action will be recorded in the change history.")) return;
+    try {
+      await axios.delete(`${API}/site-incharge/delete-completion-entry`, {
+        data: { entry_id: entry.entry_id, deleted_by: userId }
+      });
+      toast.success("Work completion entry deleted");
+      await loadCompletionHistory(workRecords);
+    } catch (error) {
+      console.error("Failed to delete work completion:", error);
+      toast.error(error.response?.data?.message || "Failed to delete work completion");
+    }
   };
 
   const saveCompletion = async (record) => {
@@ -715,24 +772,107 @@ const WorkAndMaterialEntry = () => {
                 {workRecords.map(record => {
                   const history = completionData[record.rec_id] || { entries: [], cumulative_area: 0 };
                   const rate = Number(record.rate) || 0;
+                  const assignedQuantity = Number(record.po_quantity) || 0;
+                  const cumulativeArea = Number(history.cumulative_area || 0);
+                  const exceedsAssignedQuantity = cumulativeArea > assignedQuantity;
                   const cumulativeValue = Number(history.cumulative_area || 0) * rate;
+                  let cumulativeAreaAtEntry = cumulativeArea;
                   return (
-                    <article key={record.rec_id} className="rounded-lg border border-gray-200 p-4">
+                    <article key={record.rec_id} className={`rounded-lg border p-4 ${exceedsAssignedQuantity ? "border-red-300 bg-red-50/40" : "border-gray-200"}`}>
                       <div className="font-semibold text-gray-800">{record.subcategory_name || record.work_descriptions}</div>
                       <div className="mt-1 flex flex-wrap gap-3 text-sm text-gray-600">
                         <span>Item: {record.item_id}</span>
-                        <span>Rate: ₹{rate.toFixed(2)}</span>
+                        <span>Assigned quantity: {assignedQuantity.toFixed(2)}</span>
                       </div>
-                      <div className="mt-2 text-sm">
-                        Progress to date: {Number(history.cumulative_area || 0).toFixed(2)} area | ₹{cumulativeValue.toFixed(2)}
+                      <div className={`mt-2 text-sm font-medium ${exceedsAssignedQuantity ? "text-red-700" : "text-gray-700"}`}>
+                        Completed to date: {cumulativeArea.toFixed(2)} / {assignedQuantity.toFixed(2)} assigned | ₹{cumulativeValue.toFixed(2)}
                       </div>
+                      {exceedsAssignedQuantity && (
+                        <div className="mt-2 rounded-md border border-red-200 bg-red-100 px-3 py-2 text-sm font-semibold text-red-800">
+                          Over assigned quantity by {(cumulativeArea - assignedQuantity).toFixed(2)}
+                        </div>
+                      )}
                       <div className="mt-3 space-y-2">
-                        {history.entries?.map(entry => (
-                          <div key={entry.entry_id} className="rounded border bg-gray-50 px-3 py-2 text-sm text-gray-700">
-                            <div className="font-medium">{new Date(entry.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · Area {Number(entry.area_added).toFixed(2)} · ₹{Number(entry.value_added || 0).toFixed(2)}</div>
-                            <div>{entry.remarks || "No remarks"}</div>
-                          </div>
-                        ))}
+                        {history.entries?.map(entry => {
+                          const isEditing = editingCompletionEntry?.entryId === entry.entry_id;
+                          const entryExceedsAssigned = cumulativeAreaAtEntry > assignedQuantity;
+                          cumulativeAreaAtEntry -= Number(entry.area_added) || 0;
+                          return (
+                            <div key={entry.entry_id} className={`rounded border px-3 py-2 text-sm ${entryExceedsAssigned ? "border-red-300 bg-red-50 text-red-800" : "bg-gray-50 text-gray-700"}`}>
+                              {isEditing ? (
+                                <div className="space-y-2">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={completionEditInputs.area_added}
+                                    onChange={event => updateCompletionEditInput("area_added", event.target.value)}
+                                    className="w-full rounded border border-gray-300 px-2 py-1"
+                                    aria-label="Edit completed quantity"
+                                  />
+                                  <input
+                                    type="text"
+                                    maxLength={255}
+                                    value={completionEditInputs.remarks}
+                                    onChange={event => updateCompletionEditInput("remarks", event.target.value)}
+                                    className="w-full rounded border border-gray-300 px-2 py-1"
+                                    aria-label="Edit work completion remarks"
+                                  />
+                                  {cumulativeArea - Number(entry.area_added) + Number(completionEditInputs.area_added) > assignedQuantity && (
+                                    <div className="rounded bg-red-100 px-2 py-1 text-xs font-semibold text-red-800">
+                                      This edit will exceed assigned quantity by {(
+                                        cumulativeArea - Number(entry.area_added) + Number(completionEditInputs.area_added) - assignedQuantity
+                                      ).toFixed(2)}.
+                                    </div>
+                                  )}
+                                  <div className="flex gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={saveCompletionEdit}
+                                      disabled={savingCompletionEdit}
+                                      className="rounded bg-green-600 px-3 py-1 text-white disabled:opacity-50"
+                                    >
+                                      Save edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingCompletionEntry(null);
+                                        setCompletionEditInputs({});
+                                      }}
+                                      className="rounded bg-gray-200 px-3 py-1 text-gray-700"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="font-medium">{new Date(entry.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · Area {Number(entry.area_added).toFixed(2)} · ₹{Number(entry.value_added || 0).toFixed(2)}</div>
+                                  <div>{entry.remarks || "No remarks"}</div>
+                                  {entry.is_editable && (
+                                    <div className="mt-2 flex gap-3">
+                                      <button
+                                        type="button"
+                                        onClick={() => beginCompletionEdit(entry)}
+                                        className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:text-blue-900"
+                                      >
+                                        <Pencil size={13} /> Edit
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => deleteCompletion(entry)}
+                                        className="inline-flex items-center gap-1 text-xs font-medium text-red-700 hover:text-red-900"
+                                      >
+                                        <Trash2 size={13} /> Delete
+                                      </button>
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
                         <input
@@ -756,6 +896,14 @@ const WorkAndMaterialEntry = () => {
                           <Save size={16} /> Save work
                         </button>
                       </div>
+                      {Number(completionInputs[record.rec_id]?.area_added) > 0 &&
+                        cumulativeArea + Number(completionInputs[record.rec_id].area_added) > assignedQuantity && (
+                          <div className="mt-2 rounded-md bg-red-100 px-3 py-2 text-sm font-semibold text-red-800">
+                            This entry will exceed assigned quantity by {(
+                              cumulativeArea + Number(completionInputs[record.rec_id].area_added) - assignedQuantity
+                            ).toFixed(2)}. The entry can still be saved and will be highlighted.
+                          </div>
+                        )}
                     </article>
                   );
                 })}

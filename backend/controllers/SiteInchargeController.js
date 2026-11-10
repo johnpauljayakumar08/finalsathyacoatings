@@ -141,6 +141,10 @@ exports.getCompletionEntries = async (req, res) => {
       WHERE rec_id = ? AND entry_date <= ?
     `;
     const [cumulativeResult] = await db.query(cumulativeQuery, [rec_id, date || new Date().toISOString().split('T')[0]]);
+    const [reckonerRows] = await db.query(
+      'SELECT po_quantity FROM po_reckoner WHERE rec_id = ?',
+      [rec_id]
+    );
 
     // Fetch entries for the exact date (with remarks and is_editable)
     let entriesQuery = `
@@ -168,6 +172,7 @@ exports.getCompletionEntries = async (req, res) => {
       data: {
         entries: entriesWithEditable,
         cumulative_area: parseFloat(cumulativeResult[0].cumulative_area) || 0,
+        assigned_quantity: Number(reckonerRows[0]?.po_quantity) || 0,
       },
     });
   } catch (error) {
@@ -209,16 +214,14 @@ exports.saveCompletionStatus = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'remarks is required and must be a non-empty string' });
     }
 
-    // Check rec_id exists in po_reckoner and get po_quantity
+    // Confirm the reckoner item exists before recording completion.
     const [reckonerRecord] = await db.query(
-      'SELECT rec_id, po_quantity FROM po_reckoner WHERE rec_id = ?',
+      'SELECT rec_id FROM po_reckoner WHERE rec_id = ?',
       [rec_id]
     );
     if (reckonerRecord.length === 0) {
       return res.status(400).json({ status: 'error', message: `Invalid rec_id (${rec_id}): record does not exist in po_reckoner` });
     }
-    const po_quantity = parseFloat(reckonerRecord[0].po_quantity);
-
     // Check created_by exists
     const [userRecord] = await db.query('SELECT user_id FROM users WHERE user_id = ?', [created_by]);
     if (userRecord.length === 0) {
@@ -256,10 +259,6 @@ exports.saveCompletionStatus = async (req, res) => {
       [rec_id]
     );
     const new_area = parseFloat(currentCumulative[0].current_area) || 0;
-    if (new_area > po_quantity) {
-      return res.status(400).json({ status: 'error', message: `Completed area cannot exceed PO quantity (${po_quantity})` });
-    }
-
     // Prepare cumulative data
     const completionData = {
       rec_id,
@@ -424,7 +423,7 @@ exports.updateCompletionEntry = async (req, res) => {
 
     // Check if entry_id exists
     const [existingEntry] = await db.query(`
-      SELECT entry_id, rec_id, area_added, remarks, created_at, created_by
+      SELECT entry_id, rec_id, area_added, rate, remarks, created_at, created_by
       FROM completion_entries_history 
       WHERE entry_id = ?
     `, [entryId]);
@@ -452,31 +451,14 @@ exports.updateCompletionEntry = async (req, res) => {
       });
     }
 
-    // Get the rec_id to check against po_quantity
+    // Confirm the entry still belongs to a valid reckoner item.
     const recId = currentEntry.rec_id;
-    const [reckonerRecord] = await db.query('SELECT po_quantity FROM po_reckoner WHERE rec_id = ?', [recId]);
+    const [reckonerRecord] = await db.query('SELECT rec_id FROM po_reckoner WHERE rec_id = ?', [recId]);
     if (reckonerRecord.length === 0) {
       return res.status(400).json({ status: 'error', message: `Invalid rec_id (${recId}): record does not exist` });
     }
-    const poQuantity = parseFloat(reckonerRecord[0].po_quantity) || 0;
-
-    // Calculate current total area without this entry
-    const [totalAreaWithoutThis] = await db.query(
-      `SELECT COALESCE(SUM(area_added), 0) AS total_area
-       FROM completion_entries_history 
-       WHERE rec_id = ? AND entry_id != ?`,
-      [recId, entryId]
-    );
-    const currTotalWithoutThis = parseFloat(totalAreaWithoutThis[0].total_area) || 0;
-
-    // New total after update
     const oldArea = parseFloat(currentEntry.area_added) || 0;
     const newAreaAdded = validatedAreaAdded !== null ? validatedAreaAdded : oldArea;
-    const newTotal = currTotalWithoutThis + newAreaAdded;
-
-    if (newTotal > poQuantity) {
-      return res.status(400).json({ status: 'error', message: `Updated area would exceed PO quantity (${poQuantity}) after update` });
-    }
 
     // Get current completion_status before update (to save old state)
     const [currentStatus] = await db.query(
@@ -484,19 +466,28 @@ exports.updateCompletionEntry = async (req, res) => {
       [recId]
     );
 
-    // Update the entry in completion_entries_history (no updated_by/updated_at in table, so only area and remarks)
+    const entryRate = parseFloat(currentEntry.rate) || 0;
+    // Keep the stored line value in sync with its edited area.
     console.log('Updating completion_entries_history entry...');
     await db.query(
       `UPDATE completion_entries_history
        SET
          area_added = ?,
+         value_added = ?,
          remarks = ?
        WHERE entry_id = ?`,
       [
         newAreaAdded,
+        parseFloat((newAreaAdded * entryRate).toFixed(2)),
         remarks.trim(),
         entryId
       ]
+    );
+    await db.query(
+      `INSERT INTO completion_entry_change_history
+       (entry_id, rec_id, action, old_area_added, new_area_added, old_remarks, new_remarks, changed_by)
+       VALUES (?, ?, 'UPDATE', ?, ?, ?, ?, ?)`,
+      [entryId, recId, oldArea, newAreaAdded, currentEntry.remarks, remarks.trim(), updated_by]
     );
 
     console.log('Update result: success');
@@ -602,6 +593,112 @@ exports.updateCompletionEntry = async (req, res) => {
       message: 'Internal server error',
       error: error.message
     });
+  }
+};
+
+exports.deleteCompletionEntry = async (req, res) => {
+  const { entry_id, deleted_by } = req.body;
+  const entryId = Number(entry_id);
+  const userId = Number(deleted_by);
+  if (!Number.isInteger(entryId) || entryId <= 0 ||
+      !Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'A valid completion entry and user are required.'
+    });
+  }
+
+  let connection;
+  try {
+    const [users] = await db.query('SELECT user_id FROM users WHERE user_id = ?', [userId]);
+    if (users.length === 0) {
+      return res.status(400).json({ status: 'error', message: 'Invalid user: record does not exist.' });
+    }
+
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    const [entryRows] = await connection.query(
+      `SELECT entry_id, rec_id, area_added, remarks, created_at
+       FROM completion_entries_history
+       WHERE entry_id = ?
+       FOR UPDATE`,
+      [entryId]
+    );
+    if (entryRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ status: 'error', message: 'Completion entry was not found.' });
+    }
+
+    const entry = entryRows[0];
+    const hoursSinceCreation = (Date.now() - new Date(entry.created_at).getTime()) / 3600000;
+    if (hoursSinceCreation > 48) {
+      await connection.rollback();
+      return res.status(400).json({
+        status: 'error',
+        message: 'Cannot delete this completion entry because more than 48 hours have passed.'
+      });
+    }
+
+    const [statusRows] = await connection.query(
+      `SELECT completion_id, area_completed, rate, value, billed_area, billed_value,
+              balance_area, balance_value, work_status, billing_status, remarks,
+              created_by, created_at, updated_by, updated_at
+       FROM completion_status
+       WHERE rec_id = ?
+       FOR UPDATE`,
+      [entry.rec_id]
+    );
+    await connection.query(
+      `INSERT INTO completion_entry_change_history
+       (entry_id, rec_id, action, old_area_added, old_remarks, changed_by)
+       VALUES (?, ?, 'DELETE', ?, ?, ?)`,
+      [entry.entry_id, entry.rec_id, entry.area_added, entry.remarks, userId]
+    );
+    await connection.query('DELETE FROM completion_entries_history WHERE entry_id = ?', [entryId]);
+
+    const [cumulativeRows] = await connection.query(
+      'SELECT COALESCE(SUM(area_added), 0) AS area_completed FROM completion_entries_history WHERE rec_id = ?',
+      [entry.rec_id]
+    );
+    const totalArea = Number(cumulativeRows[0].area_completed) || 0;
+    if (statusRows.length > 0) {
+      const status = statusRows[0];
+      await connection.query(
+        `INSERT INTO completion_edit_entries_history
+         (completion_status_id, area_completed, rate, value, billed_area, billed_value,
+          balance_area, balance_value, work_status, billing_status, remarks,
+          created_by, updated_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          status.completion_id, status.area_completed, status.rate, status.value,
+          status.billed_area, status.billed_value, status.balance_area, status.balance_value,
+          status.work_status, status.billing_status, status.remarks,
+          status.created_by, status.updated_by, status.created_at, status.updated_at
+        ]
+      );
+      await connection.query(
+        `UPDATE completion_status
+         SET area_completed = ?, value = ?, updated_by = ?, updated_at = NOW()
+         WHERE rec_id = ?`,
+        [
+          totalArea,
+          Number((totalArea * (Number(status.rate) || 0)).toFixed(2)),
+          userId,
+          entry.rec_id
+        ]
+      );
+    }
+
+    await connection.commit();
+    return res.status(200).json({ status: 'success', message: 'Completion entry deleted successfully.' });
+  } catch (error) {
+    if (connection) {
+      await connection.rollback().catch(rollbackError => console.error('Completion delete rollback failed:', rollbackError));
+    }
+    console.error('Error deleting completion entry:', error);
+    return res.status(500).json({ status: 'error', message: 'Failed to delete completion entry.' });
+  } finally {
+    if (connection) connection.release();
   }
 };
 
@@ -3401,13 +3498,14 @@ exports.viewCompletionBySiteInchargeId = async (req, res) => {
          cs.updated_by, cs.updated_at, cs.remarks,
          uc.user_name as created_by_user_name, uc.user_email as created_by_user_email,
          uu.user_name as updated_by_user_name, uu.user_email as updated_by_user_email,
-         ic.category_name, isc.subcategory_name, isc.billing, wd.desc_name
+         ic.category_name, isc.subcategory_name, isc.billing, wd.desc_name,
+         pr.po_quantity
        FROM completion_status cs
        JOIN po_reckoner pr ON cs.rec_id = pr.rec_id
        JOIN item_category ic ON pr.category_id = ic.category_id
        JOIN item_subcategory isc ON pr.subcategory_id = isc.subcategory_id
        JOIN work_descriptions wd ON pr.desc_id = wd.desc_id
-       JOIN completion_entries_history ceh ON cs.rec_id = ceh.rec_id
+       LEFT JOIN completion_entries_history ceh ON cs.rec_id = ceh.rec_id
        LEFT JOIN users uc ON cs.created_by = uc.user_id
        LEFT JOIN users uu ON cs.updated_by = uu.user_id
        WHERE ceh.created_by = ? 
@@ -3433,6 +3531,17 @@ exports.viewCompletionBySiteInchargeId = async (req, res) => {
          LEFT JOIN users hc ON ceh.created_by = hc.user_id
          WHERE ceh.rec_id = ? 
          ORDER BY ceh.created_at DESC`,
+        [completion.rec_id]
+      );
+      const [entryChangeHistory] = await db.query(
+        `SELECT changes.id, changes.entry_id, changes.action,
+                changes.old_area_added, changes.new_area_added,
+                changes.old_remarks, changes.new_remarks, changes.changed_by,
+                changes.created_at, users.user_name AS changed_by_user_name
+         FROM completion_entry_change_history changes
+         LEFT JOIN users ON changes.changed_by = users.user_id
+         WHERE changes.rec_id = ?
+         ORDER BY changes.created_at DESC, changes.id DESC`,
         [completion.rec_id]
       );
 
@@ -3477,6 +3586,7 @@ exports.viewCompletionBySiteInchargeId = async (req, res) => {
           subcategory_name: completion.subcategory_name,
           billing: completion.billing,
           desc_name: completion.desc_name,
+          assigned_quantity: Number(completion.po_quantity) || 0,
           created_at: completion.created_at,
           created_by: completion.created_by,
           updated_at: completion.updated_at,
@@ -3503,6 +3613,7 @@ exports.viewCompletionBySiteInchargeId = async (req, res) => {
           created_by_user_name: entry.created_by_user_name,
           created_by_user_email: entry.created_by_user_email
         })),
+        entry_change_history: entryChangeHistory,
         status_edit_history: statusEditHistory.map(edit => ({
           completion_status_id: edit.completion_status_id,
           area_completed: edit.area_completed,
@@ -4198,13 +4309,14 @@ exports.viewAllCompletion = async (req, res) => {
          uc.user_name as siteincharge_name, uc.user_email as siteincharge_email,
          uc.user_name as created_by_user_name, uc.user_email as created_by_user_email,
          uu.user_name as updated_by_user_name, uu.user_email as updated_by_user_email,
-         ic.category_name, isc.subcategory_name, isc.billing, wd.desc_name
+         ic.category_name, isc.subcategory_name, isc.billing, wd.desc_name,
+         pr.po_quantity
        FROM completion_status cs
        JOIN po_reckoner pr ON cs.rec_id = pr.rec_id
        JOIN item_category ic ON pr.category_id = ic.category_id
        JOIN item_subcategory isc ON pr.subcategory_id = isc.subcategory_id
        JOIN work_descriptions wd ON pr.desc_id = wd.desc_id
-       JOIN completion_entries_history ceh ON cs.rec_id = ceh.rec_id
+       LEFT JOIN completion_entries_history ceh ON cs.rec_id = ceh.rec_id
        LEFT JOIN users uc ON cs.created_by = uc.user_id
        LEFT JOIN users uu ON cs.updated_by = uu.user_id
        ORDER BY cs.created_by, cs.created_at DESC`,
@@ -4229,6 +4341,17 @@ exports.viewAllCompletion = async (req, res) => {
          LEFT JOIN users hc ON ceh.created_by = hc.user_id
          WHERE ceh.rec_id = ? 
          ORDER BY ceh.created_at DESC`,
+        [completion.rec_id]
+      );
+      const [entryChangeHistory] = await db.query(
+        `SELECT changes.id, changes.entry_id, changes.action,
+                changes.old_area_added, changes.new_area_added,
+                changes.old_remarks, changes.new_remarks, changes.changed_by,
+                changes.created_at, users.user_name AS changed_by_user_name
+         FROM completion_entry_change_history changes
+         LEFT JOIN users ON changes.changed_by = users.user_id
+         WHERE changes.rec_id = ?
+         ORDER BY changes.created_at DESC, changes.id DESC`,
         [completion.rec_id]
       );
 
@@ -4273,6 +4396,7 @@ exports.viewAllCompletion = async (req, res) => {
           subcategory_name: completion.subcategory_name,
           billing: completion.billing,
           desc_name: completion.desc_name,
+          assigned_quantity: Number(completion.po_quantity) || 0,
           created_at: completion.created_at,
           created_by: completion.created_by,
           updated_at: completion.updated_at,
@@ -4301,6 +4425,7 @@ exports.viewAllCompletion = async (req, res) => {
           created_by_user_name: entry.created_by_user_name,
           created_by_user_email: entry.created_by_user_email
         })),
+        entry_change_history: entryChangeHistory,
         status_edit_history: statusEditHistory.map(edit => ({
           completion_status_id: edit.completion_status_id,
           area_completed: edit.area_completed,
@@ -4615,7 +4740,7 @@ exports.adminUpdateCompletionEntry = async (req, res) => {
 
     // Check if entry_id exists
     const [existingEntry] = await db.query(`
-      SELECT entry_id, rec_id, area_added, remarks, created_at, created_by
+      SELECT entry_id, rec_id, area_added, rate, remarks, created_at, created_by
       FROM completion_entries_history 
       WHERE entry_id = ?
     `, [entryId]);
@@ -4629,31 +4754,14 @@ exports.adminUpdateCompletionEntry = async (req, res) => {
 
     const currentEntry = existingEntry[0];
 
-    // Get the rec_id to check against po_quantity
+    // Confirm the entry still belongs to a valid reckoner item.
     const recId = currentEntry.rec_id;
-    const [reckonerRecord] = await db.query('SELECT po_quantity FROM po_reckoner WHERE rec_id = ?', [recId]);
+    const [reckonerRecord] = await db.query('SELECT rec_id FROM po_reckoner WHERE rec_id = ?', [recId]);
     if (reckonerRecord.length === 0) {
       return res.status(400).json({ status: 'error', message: `Invalid rec_id (${recId}): record does not exist` });
     }
-    const poQuantity = parseFloat(reckonerRecord[0].po_quantity) || 0;
-
-    // Calculate current total area without this entry
-    const [totalAreaWithoutThis] = await db.query(
-      `SELECT COALESCE(SUM(area_added), 0) AS total_area
-       FROM completion_entries_history 
-       WHERE rec_id = ? AND entry_id != ?`,
-      [recId, entryId]
-    );
-    const currTotalWithoutThis = parseFloat(totalAreaWithoutThis[0].total_area) || 0;
-
-    // New total after update
     const oldArea = parseFloat(currentEntry.area_added) || 0;
     const newAreaAdded = validatedAreaAdded !== null ? validatedAreaAdded : oldArea;
-    const newTotal = currTotalWithoutThis + newAreaAdded;
-
-    if (newTotal > poQuantity) {
-      return res.status(400).json({ status: 'error', message: `Updated area would exceed PO quantity (${poQuantity}) after update` });
-    }
 
     // Get current completion_status before update (to save old state)
     const [currentStatus] = await db.query(
@@ -4661,19 +4769,28 @@ exports.adminUpdateCompletionEntry = async (req, res) => {
       [recId]
     );
 
-    // Update the entry in completion_entries_history (no updated_by/updated_at in table, so only area and remarks)
+    const entryRate = parseFloat(currentEntry.rate) || 0;
+    // Keep the stored line value in sync with its edited area.
     console.log('Updating completion_entries_history entry...');
     await db.query(
       `UPDATE completion_entries_history
        SET
          area_added = ?,
+         value_added = ?,
          remarks = ?
        WHERE entry_id = ?`,
       [
         newAreaAdded,
+        parseFloat((newAreaAdded * entryRate).toFixed(2)),
         remarks.trim(),
         entryId
       ]
+    );
+    await db.query(
+      `INSERT INTO completion_entry_change_history
+       (entry_id, rec_id, action, old_area_added, new_area_added, old_remarks, new_remarks, changed_by)
+       VALUES (?, ?, 'UPDATE', ?, ?, ?, ?, ?)`,
+      [entryId, recId, oldArea, newAreaAdded, currentEntry.remarks, remarks.trim(), updated_by]
     );
 
     console.log('Update result: success');

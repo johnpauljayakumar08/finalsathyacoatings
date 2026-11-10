@@ -6,6 +6,7 @@ const SiteInchargeController = require("../controllers/SiteInchargeController");
 router.get("/completion-entries", SiteInchargeController.getCompletionEntries);
 router.post("/completion-status", SiteInchargeController.saveCompletionStatus);
 router.put("/update-completion-entry", SiteInchargeController.updateCompletionEntry);
+router.delete("/delete-completion-entry", SiteInchargeController.deleteCompletionEntry);
 router.get("/completion-entries-by-site/:site_id", SiteInchargeController.getCompletionEntriesBySiteID);
 router.post("/acknowledge-material", SiteInchargeController.saveMaterialAcknowledgement);
 router.get("/acknowledgement-details", SiteInchargeController.getAcknowledgementDetails);
