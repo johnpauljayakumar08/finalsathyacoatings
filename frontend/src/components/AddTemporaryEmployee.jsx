@@ -2,7 +2,7 @@ import { API_BASE_URL } from "../config/api.js";
 import React, { useState, useEffect } from "react";
 import { useParams } from "react-router-dom"; // Import useParams
 import axios from "axios";
-import { Loader2, X, Save, User, Building, Calendar, Mail, Phone, MapPin, Users, Briefcase, FileText, DollarSign, HardHat } from "lucide-react";
+import { Loader2, X, Save, User, Building, Calendar, Mail, Phone, MapPin, Users, Briefcase, FileText, DollarSign } from "lucide-react";
 import Swal from "sweetalert2";
 
 const COMPANY_NAME = "Sathya Coatings";
@@ -25,7 +25,6 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
     permanent_address: "",
     esic_number: "",
     pf_number: "",
-    site_engineer_emp_id: "",
     aadhaar_number: "",
     approved_salary: ""
   });
@@ -35,14 +34,12 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
   const [employmentTypes, setEmploymentTypes] = useState([]);
   const [designations, setDesignations] = useState([]);
   const [statuses, setStatuses] = useState([]);
-  const [siteEngineers, setSiteEngineers] = useState([]);
   const [loading, setLoading] = useState({
     form: false,
     genders: false,
     employmentTypes: false,
     designations: false,
-    statuses: false,
-    siteEngineers: false
+    statuses: false
   });
 
   // Decode userId from encodedUserId
@@ -106,17 +103,6 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
         } finally {
           setLoading((l) => ({ ...l, statuses: false }));
         }
-
-        try {
-          setLoading((l) => ({ ...l, siteEngineers: true }));
-          const { data } = await axios.get(`${API_BASE_URL}/admin/site-engineers`);
-          setSiteEngineers(data.data || []);
-        } catch (error) {
-          console.error("Error fetching site engineers:", error);
-          setErrors((prev) => ({ ...prev, form: "Failed to load site engineers." }));
-        } finally {
-          setLoading((l) => ({ ...l, siteEngineers: false }));
-        }
       })();
     }
   }, [isOpen, saveToDatabase]);
@@ -139,7 +125,6 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
     if (!formData.status_id) newErrors.status_id = "Status is required";
     if (!formData.emp_type_id) newErrors.emp_type_id = "Employment Type is required";
     if (!formData.designation_id) newErrors.designation_id = "Designation is required";
-    if (!formData.site_engineer_emp_id) newErrors.site_engineer_emp_id = "Site Engineer is required";
     if (!formData.mobile) newErrors.mobile = "Mobile is required";
     else if (!mobileRegex.test(formData.mobile)) newErrors.mobile = "Invalid mobile: 10 digits, optional +91";
     if (!formData.company_email) newErrors.company_email = "Company Email is required";
@@ -223,7 +208,6 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
         permanent_address: "",
         esic_number: "",
         pf_number: "",
-        site_engineer_emp_id: "",
         aadhaar_number: "",
         approved_salary: ""
       });
@@ -295,16 +279,6 @@ const AddTemporaryEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveT
               },
               { label: "Mobile", name: "mobile", type: "text", placeholder: "e.g., +919876543210", icon: Phone },
               { label: "Company Email", name: "company_email", type: "email", placeholder: "e.g., name@company.com", icon: Mail },
-              {
-                label: "Site Engineer",
-                name: "site_engineer_emp_id",
-                type: "select",
-                options: saveToDatabase ? siteEngineers : [{ emp_id: "SAMPLE-ENGINEER", full_name: "Sample Site Engineer" }],
-                loading: saveToDatabase && loading.siteEngineers,
-                optLabel: "full_name",
-                optValue: "emp_id",
-                icon: HardHat
-              },
               { label: "Aadhaar Number", name: "aadhaar_number", type: "text", placeholder: "Enter 12-digit Aadhaar number", icon: FileText },
               {
                 label: "ESIC Number",

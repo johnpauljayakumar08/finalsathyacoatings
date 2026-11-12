@@ -546,8 +546,9 @@ const modalTotalCost = useMemo(() => {
       if (!editingAssignment.uom_id) {
         validationErrors.push("UOM required");
       }
-      if (!editingAssignment.quantity || isNaN(editingAssignment.quantity) || parseInt(editingAssignment.quantity) <= 0) {
-        validationErrors.push("Positive integer quantity required");
+      const quantity = Number(editingAssignment.quantity);
+      if (!Number.isFinite(quantity) || quantity <= 0 || Math.abs(quantity * 100 - Math.round(quantity * 100)) > 1e-8) {
+        validationErrors.push("Positive quantity with up to 2 decimal places required");
       }
       if (!editingAssignment.rate || isNaN(editingAssignment.rate) || parseFloat(editingAssignment.rate) < 0) {
         validationErrors.push("Non-negative rate required");
@@ -578,7 +579,7 @@ const modalTotalCost = useMemo(() => {
         assignment_id: editingAssignment.id,
         item_id: editingAssignment.item_id,
         uom_id: parseInt(editingAssignment.uom_id),
-        quantity: parseInt(editingAssignment.quantity),
+        quantity,
         comp_ratio_a: editingAssignment.comp_ratio_a ? parseInt(editingAssignment.comp_ratio_a) : null,
         comp_ratio_b: editingAssignment.comp_ratio_b ? parseInt(editingAssignment.comp_ratio_b) : null,
         comp_ratio_c: editingAssignment.comp_ratio_c ? parseInt(editingAssignment.comp_ratio_c) : null,
@@ -722,8 +723,9 @@ const modalTotalCost = useMemo(() => {
         if (!row.uom_id) {
           validationErrors.push(`Row ${index + 1}: UOM required`);
         }
-        if (!row.quantity || isNaN(row.quantity) || parseInt(row.quantity) <= 0) {
-          validationErrors.push(`Row ${index + 1}: Positive integer quantity required`);
+        const quantity = Number(row.quantity);
+        if (!Number.isFinite(quantity) || quantity <= 0 || Math.abs(quantity * 100 - Math.round(quantity * 100)) > 1e-8) {
+          validationErrors.push(`Row ${index + 1}: Positive quantity with up to 2 decimal places required`);
         }
         if (!row.rate || isNaN(row.rate) || parseFloat(row.rate) < 0) {
           validationErrors.push(`Row ${index + 1}: Non-negative rate required`);
@@ -747,7 +749,7 @@ const modalTotalCost = useMemo(() => {
         site_id: selectedSite.value,
         item_id: row.item_id,
         uom_id: parseInt(row.uom_id),
-        quantity: parseInt(row.quantity),
+        quantity: Number(row.quantity),
         desc_id: String(selectedWorkDescription.value),
         comp_ratio_a: row.comp_ratio_a ? parseInt(row.comp_ratio_a) : null,
         comp_ratio_b: row.comp_ratio_b ? parseInt(row.comp_ratio_b) : null,
@@ -2722,7 +2724,8 @@ const canAddProjection = useMemo(() => {
                                             className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm disabled:bg-gray-100"
                                             required
                                             disabled={!isFormEnabled}
-                                            min="1"
+                                            min="0.01"
+                                            step="0.01"
                                           />
                                         </div>
                                         <div>
@@ -3672,7 +3675,8 @@ const canAddProjection = useMemo(() => {
                       value={editingAssignment.quantity}
                       onChange={handleModalChange}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                      min="1"
+                      min="0.01"
+                      step="0.01"
                     />
                   </div>
                 </div>

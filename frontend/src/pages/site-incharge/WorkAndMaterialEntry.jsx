@@ -2,7 +2,7 @@ import { API_BASE_URL } from "../../config/api.js";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import Select from "react-select";
-import { FileText, Save, HardHat, Pencil, Plus, X, Trash2 } from "lucide-react";
+import { FileText, Save, HardHat, Pencil, Plus, X, Trash2, UserPlus } from "lucide-react";
 import { ToastContainer, toast } from "react-toastify";
 import { useParams } from "react-router-dom";
 
@@ -32,7 +32,10 @@ const WorkAndMaterialEntry = () => {
   const [selectedMaterials, setSelectedMaterials] = useState(new Set());
   const [assignedLabours, setAssignedLabours] = useState([]);
   const [labourShiftInputs, setLabourShiftInputs] = useState({});
+  const [labourRateInputs, setLabourRateInputs] = useState({});
   const [labourRemarksInputs, setLabourRemarksInputs] = useState({});
+  const [labourRoster, setLabourRoster] = useState([]);
+  const [selectedAssignmentLabours, setSelectedAssignmentLabours] = useState([]);
   const [budgetHeads, setBudgetHeads] = useState([]);
   const [budgetExpenseData, setBudgetExpenseData] = useState({});
   const [budgetExpenseInputs, setBudgetExpenseInputs] = useState({});
@@ -41,6 +44,7 @@ const WorkAndMaterialEntry = () => {
   const [savingWork, setSavingWork] = useState(false);
   const [savingMaterials, setSavingMaterials] = useState(false);
   const [savingLabour, setSavingLabour] = useState(false);
+  const [savingLabourAssignment, setSavingLabourAssignment] = useState(false);
   const [savingBudgetExpense, setSavingBudgetExpense] = useState(false);
 
   useEffect(() => {
@@ -93,6 +97,19 @@ const WorkAndMaterialEntry = () => {
     value: description.desc_id,
     label: description.desc_name
   }));
+  const labourRosterOptions = useMemo(() => {
+    const groups = new Map();
+    labourRoster.forEach(labour => {
+      const groupLabel = labour.team_name || "Other labourers";
+      if (!groups.has(groupLabel)) groups.set(groupLabel, []);
+      groups.get(groupLabel).push({
+        value: labour.id,
+        label: labour.team_role === "head" ? `${labour.full_name} (Head)` : labour.full_name,
+        approved_salary: labour.approved_salary
+      });
+    });
+    return Array.from(groups, ([label, options]) => ({ label, options }));
+  }, [labourRoster]);
 
   useEffect(() => {
     setSelectedProject(null);
@@ -107,6 +124,7 @@ const WorkAndMaterialEntry = () => {
     setSelectedMaterials(new Set());
     setAssignedLabours([]);
     setLabourShiftInputs({});
+    setLabourRateInputs({});
     setLabourRemarksInputs({});
     setBudgetHeads([]);
     setBudgetExpenseData({});
@@ -125,6 +143,7 @@ const WorkAndMaterialEntry = () => {
     setSelectedMaterials(new Set());
     setAssignedLabours([]);
     setLabourShiftInputs({});
+    setLabourRateInputs({});
     setLabourRemarksInputs({});
     setBudgetHeads([]);
     setBudgetExpenseData({});
@@ -143,6 +162,7 @@ const WorkAndMaterialEntry = () => {
       setSelectedMaterials(new Set());
       setAssignedLabours([]);
       setLabourShiftInputs({});
+      setLabourRateInputs({});
       setLabourRemarksInputs({});
       setBudgetHeads([]);
       setBudgetExpenseData({});
@@ -171,11 +191,36 @@ const WorkAndMaterialEntry = () => {
     setSelectedMaterials(new Set());
     setAssignedLabours([]);
     setLabourShiftInputs({});
+    setLabourRateInputs({});
     setLabourRemarksInputs({});
     setBudgetHeads([]);
     setBudgetExpenseData({});
     setBudgetExpenseInputs({});
   }, [selectedSite]);
+
+  useEffect(() => {
+    if (!selectedWorkDescription) {
+      setLabourRoster([]);
+      setSelectedAssignmentLabours([]);
+      return;
+    }
+
+    setSelectedAssignmentLabours([]);
+    let cancelled = false;
+    const loadLabourRoster = async () => {
+      try {
+        const response = await axios.get(`${API}/site-incharge/labours`);
+        if (!cancelled) setLabourRoster(response.data.data || []);
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Failed to load labour roster:", error);
+          toast.error(error.response?.data?.message || "Failed to load labour roster");
+        }
+      }
+    };
+    loadLabourRoster();
+    return () => { cancelled = true; };
+  }, [selectedWorkDescription]);
 
   const loadCompletionHistory = useCallback(async (records) => {
     const pairs = await Promise.all(records.map(async record => {
@@ -262,6 +307,10 @@ const WorkAndMaterialEntry = () => {
         setLabourShiftInputs(Object.fromEntries(dailyLabours.map(labour => [
           labour.assignment_id,
           labour.shift === null || labour.shift === undefined ? "" : String(labour.shift)
+        ])));
+        setLabourRateInputs(Object.fromEntries(dailyLabours.map(labour => [
+          labour.assignment_id,
+          String(labour.daily_shift_cost ?? labour.shift_rate ?? "")
         ])));
         setLabourRemarksInputs(Object.fromEntries(dailyLabours.map(labour => [
           labour.assignment_id,
@@ -432,12 +481,20 @@ const WorkAndMaterialEntry = () => {
   const saveLabourAttendance = async () => {
     const attendanceData = assignedLabours.flatMap(labour => {
       const rawShift = labourShiftInputs[labour.assignment_id];
-      if (rawShift === "" || rawShift === undefined || rawShift === null) return [];
-      const shift = Number(rawShift);
+      if ((rawShift === "" || rawShift === undefined || rawShift === null) && !labour.attendance_id) return [];
+      const shift = rawShift === "" || rawShift === undefined || rawShift === null
+        ? Number(labour.shift)
+        : Number(rawShift);
       if (!Number.isFinite(shift) || shift <= 0 || Math.round(shift * 10) !== shift * 10) return [];
+      const rawShiftCost = labourRateInputs[labour.assignment_id];
+      const shiftCost = rawShiftCost === "" || rawShiftCost === undefined || rawShiftCost === null
+        ? Number(labour.shift_rate)
+        : Number(rawShiftCost);
+      if (!Number.isFinite(shiftCost) || shiftCost <= 0 || Math.abs(shiftCost * 100 - Math.round(shiftCost * 100)) > 1e-8) return [];
       const remarks = labourRemarksInputs[labour.assignment_id]?.trim() || "";
       if (labour.attendance_id && (
         Number(labour.shift) === shift &&
+        Number(labour.daily_shift_cost ?? labour.shift_rate) === shiftCost &&
         (labour.remarks || "") === remarks
       )) return [];
       if (labour.attendance_id && !labour.is_editable) return [];
@@ -445,6 +502,7 @@ const WorkAndMaterialEntry = () => {
         labour_assignment_id: labour.assignment_id,
         entry_date: selectedDate,
         shift,
+        shift_cost: shiftCost,
         remarks: remarks || null,
         attendance_id: labour.attendance_id || undefined
       }];
@@ -476,6 +534,10 @@ const WorkAndMaterialEntry = () => {
         labour.assignment_id,
         labour.shift === null || labour.shift === undefined ? "" : String(labour.shift)
       ])));
+      setLabourRateInputs(Object.fromEntries(dailyLabours.map(labour => [
+        labour.assignment_id,
+        String(labour.daily_shift_cost ?? labour.shift_rate ?? "")
+      ])));
       setLabourRemarksInputs(Object.fromEntries(dailyLabours.map(labour => [
         labour.assignment_id,
         labour.remarks || ""
@@ -485,6 +547,137 @@ const WorkAndMaterialEntry = () => {
       toast.error(error.response?.data?.message || "Failed to save labour shifts");
     } finally {
       setSavingLabour(false);
+    }
+  };
+
+  const saveLabourAssignment = async () => {
+    if (!selectedProject || !selectedSite || !selectedWorkDescription) {
+      toast.error("Select a project, site, and work description first");
+      return;
+    }
+    if (selectedAssignmentLabours.length === 0) {
+      toast.error("Select at least one labourer");
+      return;
+    }
+    if (!userId) {
+      toast.error("User ID is missing from this page");
+      return;
+    }
+    const labourAssignments = selectedAssignmentLabours.map(labour => ({
+      labour_id: labour.value,
+      shift: Number(labour.shifts),
+      shift_cost: Number(labour.shift_cost ?? labour.approved_salary)
+    }));
+    if (labourAssignments.some(labour =>
+      !Number.isFinite(labour.shift) ||
+      labour.shift <= 0 ||
+      labour.shift > 99.9 ||
+      Math.abs(labour.shift * 10 - Math.round(labour.shift * 10)) > 1e-8
+    )) {
+      toast.error("Enter valid shifts for each labourer, such as 1 or 1.5");
+      return;
+    }
+    if (labourAssignments.some(labour =>
+      !Number.isFinite(labour.shift_cost) ||
+      labour.shift_cost <= 0 ||
+      Math.abs(labour.shift_cost * 100 - Math.round(labour.shift_cost * 100)) > 1e-8
+    )) {
+      toast.error("Enter a positive per-shift cost with up to two decimal places for each labourer");
+      return;
+    }
+
+    setSavingLabourAssignment(true);
+    let assignmentCreated = false;
+    try {
+      await axios.post(`${API}/site-incharge/save-labour-assignment`, {
+        project_id: selectedProject.value,
+        site_id: selectedSite.value,
+        desc_id: selectedWorkDescription.value,
+        labour_assignments: labourAssignments,
+        from_date: selectedDate,
+        to_date: selectedDate,
+        created_by: Number(userId)
+      });
+      assignmentCreated = true;
+      setSelectedAssignmentLabours([]);
+      const attendanceResponse = await axios.get(`${API}/site-incharge/labour-attendance`, {
+        params: {
+          project_id: selectedProject.value,
+          site_id: selectedSite.value,
+          desc_id: selectedWorkDescription.value,
+          entry_date: selectedDate
+        }
+      });
+      const dailyLabours = attendanceResponse.data.data || [];
+      const selectedByLabourId = new Map(
+        labourAssignments.map(assignment => [String(assignment.labour_id), assignment])
+      );
+      const assignedByLabourId = new Map(dailyLabours.map(labour => [String(labour.labour_id), labour]));
+      const attendanceData = Array.from(selectedByLabourId.entries()).map(([labourId, assignment]) => {
+        const labour = assignedByLabourId.get(labourId);
+        if (!labour) return null;
+        return {
+          labour_assignment_id: labour.assignment_id,
+          entry_date: selectedDate,
+          shift: assignment.shift,
+          shift_cost: assignment.shift_cost
+        };
+      });
+      setAssignedLabours(dailyLabours);
+      setLabourShiftInputs(Object.fromEntries(dailyLabours.map(labour => [
+        labour.assignment_id,
+        selectedByLabourId.has(String(labour.labour_id))
+          ? String(selectedByLabourId.get(String(labour.labour_id)).shift)
+          : labour.shift === null || labour.shift === undefined ? "" : String(labour.shift)
+      ])));
+      setLabourRateInputs(Object.fromEntries(dailyLabours.map(labour => [
+        labour.assignment_id,
+        selectedByLabourId.has(String(labour.labour_id))
+          ? String(selectedByLabourId.get(String(labour.labour_id)).shift_cost)
+          : String(labour.daily_shift_cost ?? labour.shift_rate ?? "")
+      ])));
+      setLabourRemarksInputs(Object.fromEntries(dailyLabours.map(labour => [
+        labour.assignment_id,
+        labour.remarks || ""
+      ])));
+      if (attendanceData.some(entry => entry === null)) {
+        toast.error("Labour was assigned, but one or more assigned rows could not be loaded. Refresh and enter shifts.");
+        return;
+      }
+      await axios.post(`${API}/site-incharge/save-labour-attendance`, {
+        attendance_data: attendanceData,
+        created_by: Number(userId)
+      });
+      const refreshedAttendanceResponse = await axios.get(`${API}/site-incharge/labour-attendance`, {
+        params: {
+          project_id: selectedProject.value,
+          site_id: selectedSite.value,
+          desc_id: selectedWorkDescription.value,
+          entry_date: selectedDate
+        }
+      });
+      const refreshedLabours = refreshedAttendanceResponse.data.data || [];
+      setAssignedLabours(refreshedLabours);
+      setLabourShiftInputs(Object.fromEntries(refreshedLabours.map(labour => [
+        labour.assignment_id,
+        labour.shift === null || labour.shift === undefined ? "" : String(labour.shift)
+      ])));
+      setLabourRateInputs(Object.fromEntries(refreshedLabours.map(labour => [
+        labour.assignment_id,
+        String(labour.daily_shift_cost ?? labour.shift_rate ?? "")
+      ])));
+      setLabourRemarksInputs(Object.fromEntries(refreshedLabours.map(labour => [
+        labour.assignment_id,
+        labour.remarks || ""
+      ])));
+      toast.success("Labour assigned and shifts saved");
+    } catch (error) {
+      console.error("Failed to assign labour or save its shifts:", error);
+      toast.error(assignmentCreated
+        ? "Labour was assigned, but saving or refreshing its shifts failed. Refresh and verify the entry before retrying."
+        : error.response?.data?.message || "Labour assignment failed");
+    } finally {
+      setSavingLabourAssignment(false);
     }
   };
 
@@ -717,7 +910,8 @@ const WorkAndMaterialEntry = () => {
   const workLabel = selectedWorkDescription?.label || "selected work";
   const dailyLabourCost = assignedLabours.reduce((total, labour) => {
     const shift = Number(labourShiftInputs[labour.assignment_id] ?? labour.shift) || 0;
-    return total + shift * (Number(labour.shift_rate) || 0);
+    const shiftRate = Number(labourRateInputs[labour.assignment_id] ?? labour.daily_shift_cost ?? labour.shift_rate) || 0;
+    return total + shift * shiftRate;
   }, 0);
   const dailyMaterialCost = acknowledgedDispatches.reduce((total, dispatch) => {
     const entries = usageData[dispatch.id]?.entries || [];
@@ -763,7 +957,7 @@ const WorkAndMaterialEntry = () => {
           <div className="rounded-lg bg-white p-5 text-sm text-gray-600 shadow-sm">No work completion items found for this work description.</div>
         )}
 
-        {!loading && (workRecords.length > 0 || budgetHeads.length > 0) && (
+        {!loading && selectedWorkDescription && (
           <div className="space-y-5">
             {workRecords.length > 0 && (
             <section className="rounded-lg bg-white p-4 shadow-sm">
@@ -925,23 +1119,102 @@ const WorkAndMaterialEntry = () => {
                 </div>
               </div>
               {assignedLabours.length === 0 ? (
-                <p className="rounded-md bg-amber-50 p-3 text-sm text-amber-800">
-                  No labour is assigned to this work for {selectedDate}. Add the assignment and date range in Labour Assignment first.
-                </p>
+                <div className="space-y-4 rounded-md border border-amber-200 bg-amber-50 p-4">
+                  <p className="text-sm text-amber-800">
+                    No labour is assigned to this work for {selectedDate}. Assign labour here to start recording shifts and cost.
+                  </p>
+                  <div className="grid grid-cols-1 gap-3">
+                    <label className="text-sm font-medium text-gray-700">
+                      Select labourers
+                      <Select
+                        className="mt-1"
+                        classNamePrefix="react-select"
+                        options={labourRosterOptions}
+                        value={selectedAssignmentLabours}
+                        onChange={options => setSelectedAssignmentLabours(previous => (options || []).map(labour => {
+                          const existing = previous.find(item => item.value === labour.value);
+                          return {
+                            ...labour,
+                            shifts: existing?.shifts ?? "",
+                            shift_cost: existing?.shift_cost ?? labour.approved_salary ?? ""
+                          };
+                        }))}
+                        isMulti
+                        closeMenuOnSelect={false}
+                        placeholder="Select one or more labourers"
+                      />
+                    </label>
+                  </div>
+                  {selectedAssignmentLabours.length > 0 && (
+                    <div className="space-y-2">
+                      {selectedAssignmentLabours.map(labour => (
+                        <article key={labour.value} className="grid grid-cols-1 items-center gap-3 rounded-md border border-amber-200 bg-white p-3 text-sm sm:grid-cols-[minmax(0,1fr)_9rem_12rem_10rem]">
+                          <span className="font-medium text-gray-800">{labour.label}</span>
+                          <label className="text-xs font-medium text-gray-600">
+                            Total shifts
+                            <input
+                              type="number"
+                              min="0.1"
+                              max="99.9"
+                              step="0.1"
+                              value={labour.shifts}
+                              onChange={event => setSelectedAssignmentLabours(previous => previous.map(item =>
+                                item.value === labour.value ? { ...item, shifts: event.target.value } : item
+                              ))}
+                              placeholder="e.g. 1.5"
+                              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                            />
+                          </label>
+                          <label className="text-xs font-medium text-gray-600">
+                            Cost per shift (₹)
+                            <input
+                              type="number"
+                              min="0.01"
+                              step="0.01"
+                              value={labour.shift_cost}
+                              onChange={event => setSelectedAssignmentLabours(previous => previous.map(item =>
+                                item.value === labour.value ? { ...item, shift_cost: event.target.value } : item
+                              ))}
+                              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                            />
+                          </label>
+                          <div className="text-xs font-medium text-gray-600 sm:text-right">
+                            Total cost
+                            <div className="mt-1 text-base font-semibold text-gray-800">
+                              ₹{(
+                                (Number(labour.shifts) || 0) *
+                                (Number(labour.shift_cost) || 0)
+                              ).toFixed(2)}
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={saveLabourAssignment}
+                    disabled={savingLabourAssignment || selectedAssignmentLabours.length === 0}
+                    className="inline-flex items-center gap-2 rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <UserPlus size={16} />
+                    {savingLabourAssignment ? "Assigning labour..." : "Assign labour & save shifts"}
+                  </button>
+                </div>
               ) : (
                 <>
                   <div className="space-y-3">
                     {assignedLabours.map(labour => {
                       const shift = Number(labourShiftInputs[labour.assignment_id]) || 0;
-                      const shiftRate = Number(labour.shift_rate) || 0;
+                      const shiftRate = Number(labourRateInputs[labour.assignment_id] ?? labour.daily_shift_cost ?? labour.shift_rate) || 0;
                       const canEdit = !labour.attendance_id || labour.is_editable;
                       return (
-                        <article key={labour.assignment_id} className="grid grid-cols-1 items-center gap-3 rounded-lg border border-gray-200 p-3 sm:grid-cols-[minmax(0,1fr)_9rem_1fr_9rem]">
+                        <article key={labour.assignment_id} className="grid grid-cols-1 items-center gap-3 rounded-lg border border-gray-200 p-3 sm:grid-cols-[minmax(0,1fr)_8rem_10rem_1fr_9rem]">
                           <div className="flex min-w-0 items-center gap-2">
                             <HardHat size={17} className="shrink-0 text-amber-600" />
                             <div className="min-w-0">
                               <div className="truncate font-medium text-gray-800">{labour.full_name}</div>
-                              <div className="text-xs text-gray-500">Labour #{labour.labour_id}</div>
+                              <div className="text-xs text-gray-500">Head: {labour.head_name || "No head assigned"}</div>
                             </div>
                           </div>
                           <label className="text-xs font-medium text-gray-600">
@@ -958,6 +1231,22 @@ const WorkAndMaterialEntry = () => {
                                 [labour.assignment_id]: event.target.value
                               }))}
                               placeholder="e.g. 1.5"
+                              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
+                            />
+                          </label>
+                          <label className="text-xs font-medium text-gray-600">
+                            Cost per shift (₹)
+                            <input
+                              type="number"
+                              min="0.01"
+                              step="0.01"
+                              value={labourRateInputs[labour.assignment_id] ?? ""}
+                              disabled={!canEdit}
+                              onChange={event => setLabourRateInputs(previous => ({
+                                ...previous,
+                                [labour.assignment_id]: event.target.value
+                              }))}
+                              placeholder="e.g. 800"
                               className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
                             />
                           </label>
@@ -992,7 +1281,7 @@ const WorkAndMaterialEntry = () => {
                       disabled={savingLabour || !assignedLabours.some(labour => !labour.attendance_id || labour.is_editable)}
                       className="inline-flex items-center gap-2 rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <Save size={16} />{savingLabour ? "Saving shifts..." : "Save daily shifts"}
+                      <Save size={16} />{savingLabour ? "Saving..." : "Save shifts & cost"}
                     </button>
                   </div>
                 </>

@@ -1752,7 +1752,7 @@ exports.saveLabourAttendance = async (req, res) => {
     const now = new Date();
 
     for (const data of attendance_data) {
-      const { labour_assignment_id, entry_date, shift, remarks, attendance_id } = data;
+      const { labour_assignment_id, entry_date, shift, shift_cost, remarks, attendance_id } = data;
 
       // Common validations
       if (!labour_assignment_id || isNaN(labour_assignment_id)) {
@@ -1771,6 +1771,17 @@ exports.saveLabourAttendance = async (req, res) => {
       if (remarks && typeof remarks !== 'string') {
         return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
       }
+      const parsedShiftCost = shift_cost === undefined || shift_cost === null || shift_cost === ""
+        ? null
+        : Number(shift_cost);
+      if (parsedShiftCost !== null && (
+        !Number.isFinite(parsedShiftCost) ||
+        parsedShiftCost <= 0 ||
+        parsedShiftCost > 99999999.99 ||
+        Math.abs(parsedShiftCost * 100 - Math.round(parsedShiftCost * 100)) > 1e-8
+      )) {
+        return res.status(400).json({ status: 'error', message: 'shift_cost must be a positive amount' });
+      }
 
       const [assignment] = await db.query('SELECT id FROM labour_assignment WHERE id = ?', [labour_assignment_id]);
       if (assignment.length === 0) {
@@ -1787,7 +1798,7 @@ exports.saveLabourAttendance = async (req, res) => {
 
         // Fetch current state for history
         const [existingAttendance] = await db.query(`
-          SELECT id, labour_assignment_id, shift, remarks, created_by, created_at, updated_at
+          SELECT id, labour_assignment_id, shift, shift_cost, remarks, created_by, created_at, updated_by, updated_at
           FROM labour_attendance 
           WHERE id = ?
         `, [attendanceId]);
@@ -1811,12 +1822,13 @@ exports.saveLabourAttendance = async (req, res) => {
         // Insert current state into edit history
         await db.query(
           `INSERT INTO labour_attendance_edit_history
-           (labour_attendance_id, labour_assignment_id, shift, remarks, created_by, updated_by, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           (labour_attendance_id, labour_assignment_id, shift, shift_cost, remarks, created_by, updated_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             attendanceId,
             currentAttendance.labour_assignment_id,
             currentAttendance.shift,
+            currentAttendance.shift_cost,
             currentAttendance.remarks,
             currentAttendance.created_by,
             currentAttendance.updated_by,
@@ -1828,17 +1840,17 @@ exports.saveLabourAttendance = async (req, res) => {
         // Update the attendance
         await db.query(
           `UPDATE labour_attendance
-           SET shift = ?, remarks = ?, updated_by = ?, updated_at = NOW()
+           SET shift = ?, shift_cost = COALESCE(?, shift_cost), remarks = ?, updated_by = ?, updated_at = NOW()
            WHERE id = ?`,
-          [parsedShift, remarks || null, created_by, attendanceId]
+          [parsedShift, parsedShiftCost, remarks || null, created_by, attendanceId]
         );
       } else {
         // Insert new attendance
         await db.query(
           `INSERT INTO labour_attendance 
-           (labour_assignment_id, shift, remarks, created_by, created_at, entry_date)
-           VALUES (?, ?, ?, ?, NOW(), ?)`,
-          [labour_assignment_id, parsedShift, remarks || null, created_by, entry_date]
+           (labour_assignment_id, shift, shift_cost, remarks, created_by, created_at, entry_date)
+           VALUES (?, ?, ?, ?, ?, NOW(), ?)`,
+          [labour_assignment_id, parsedShift, parsedShiftCost, remarks || null, created_by, entry_date]
         );
       }
     }
@@ -2196,14 +2208,23 @@ exports.getLabourAttendance = async (req, res) => {
          la.labour_id, 
          l.full_name, 
          COALESCE(NULLIF(la.salary, 0), l.approved_salary) AS shift_rate,
+         lat.shift_cost AS daily_shift_cost,
+         COALESCE(
+           head.full_name,
+           CASE WHEN EXISTS (
+             SELECT 1 FROM labour_team_members team_lead WHERE team_lead.head_labour_id = l.id
+           ) THEN CONCAT(l.full_name, ' (Head)') ELSE 'No head assigned' END
+         ) AS head_name,
          lat.id as attendance_id,
          lat.shift,
-         ROUND(lat.shift * COALESCE(NULLIF(la.salary, 0), l.approved_salary), 2) AS labour_cost,
+         ROUND(lat.shift * COALESCE(lat.shift_cost, NULLIF(la.salary, 0), l.approved_salary), 2) AS labour_cost,
          lat.remarks,
          lat.created_at,
          lat.updated_at
        FROM labour_assignment la 
        JOIN labour l ON la.labour_id = l.id 
+       LEFT JOIN labour_team_members team ON team.member_labour_id = l.id
+       LEFT JOIN labour head ON head.id = team.head_labour_id
        LEFT JOIN labour_attendance lat ON la.id = lat.labour_assignment_id AND lat.entry_date = ?
        WHERE la.project_id = ? AND la.site_id = ? AND la.desc_id = ?
          AND la.from_date <= ? AND la.to_date >= ?`,
@@ -2895,8 +2916,38 @@ exports.getBudgetWorkDescriptionsBySite = async (req, res) => {
 exports.getLabours = async (req, res) => {
   try {
     const [labours] = await db.query(
-      `SELECT id, full_name, approved_salary
-       FROM labour`
+      `SELECT l.id, l.full_name, l.approved_salary,
+              CASE
+                WHEN team.head_labour_id IS NOT NULL THEN team.head_labour_id
+                WHEN EXISTS (
+                  SELECT 1
+                  FROM labour_team_members team_lead
+                  WHERE team_lead.head_labour_id = l.id
+                ) THEN l.id
+                ELSE NULL
+              END AS team_id,
+              CASE
+                WHEN team.head_labour_id IS NOT NULL THEN head.full_name
+                WHEN EXISTS (
+                  SELECT 1
+                  FROM labour_team_members team_lead
+                  WHERE team_lead.head_labour_id = l.id
+                ) THEN l.full_name
+                ELSE 'Other labourers'
+              END AS team_name,
+              CASE
+                WHEN team.head_labour_id IS NOT NULL THEN 'member'
+                WHEN EXISTS (
+                  SELECT 1
+                  FROM labour_team_members team_lead
+                  WHERE team_lead.head_labour_id = l.id
+                ) THEN 'head'
+                ELSE 'unassigned'
+              END AS team_role
+       FROM labour l
+       LEFT JOIN labour_team_members team ON team.member_labour_id = l.id
+       LEFT JOIN labour head ON head.id = team.head_labour_id
+       ORDER BY team_id IS NULL, team_id, team_role, l.full_name`
     );
 
     // Log the number of records retrieved for debugging
@@ -2924,7 +2975,9 @@ exports.calculateLabourBudget = async (req, res) => {
   try {
     // Step 1: Fetch all labour assignments with labour_id, full_name, desc_id, and desc_name
     const [assignments] = await db.query(
-      `SELECT la.id, la.project_id, la.site_id, la.desc_id, la.salary, la.labour_id, l.full_name, wd.desc_name 
+      `SELECT la.id, la.project_id, la.site_id, la.desc_id,
+              COALESCE(NULLIF(la.salary, 0), l.approved_salary) AS salary,
+              la.labour_id, l.full_name, wd.desc_name
        FROM labour_assignment la
        JOIN labour l ON la.labour_id = l.id
        JOIN work_descriptions wd ON la.desc_id = wd.desc_id`
@@ -2958,7 +3011,7 @@ exports.calculateLabourBudget = async (req, res) => {
 
       // Fetch attendances for this labour_assignment with shift and entry_date
       const [attendances] = await db.query(
-        `SELECT shift, entry_date FROM labour_attendance WHERE labour_assignment_id = ?`,
+        `SELECT shift, entry_date, shift_cost FROM labour_attendance WHERE labour_assignment_id = ?`,
         [assignment.id]
       );
 
@@ -2968,7 +3021,7 @@ exports.calculateLabourBudget = async (req, res) => {
 
       for (const attendance of attendances) {
         const shift = parseFloat(attendance.shift) || 0; // Convert shift to number
-        total_salary += shift * (parseFloat(assignment.salary) || 0);
+        total_salary += shift * (parseFloat(attendance.shift_cost) || parseFloat(assignment.salary) || 0);
         total_shifts += shift;
         shifts_by_date.push({
           entry_date: attendance.entry_date,
@@ -3813,7 +3866,7 @@ exports.viewLabourAttendanceBySiteInchargeId = async (req, res) => {
     // Fetch current labour attendance created by this incharge with joined labour details and user names/emails
     const [attendances] = await db.query(
       `SELECT 
-         la.id, la.labour_assignment_id, la.shift, la.entry_date, la.remarks, 
+         la.id, la.labour_assignment_id, la.shift, la.shift_cost, la.entry_date, la.remarks,
          la.created_by, la.created_at, la.updated_by, la.updated_at,
          uc.user_name as created_by_user_name, uc.user_email as created_by_user_email,
          uu.user_name as updated_by_user_name, uu.user_email as updated_by_user_email,
@@ -3833,7 +3886,7 @@ exports.viewLabourAttendanceBySiteInchargeId = async (req, res) => {
     for (const attendance of attendances) {
       const [editHistory] = await db.query(
         `SELECT 
-           eh.id, eh.labour_attendance_id, eh.labour_assignment_id, eh.shift, 
+           eh.id, eh.labour_attendance_id, eh.labour_assignment_id, eh.shift, eh.shift_cost,
            eh.remarks, eh.created_by, eh.updated_by, eh.created_at, eh.updated_at,
            ec.user_name as created_by_user_name, ec.user_email as created_by_user_email,
            eu.user_name as updated_by_user_name, eu.user_email as updated_by_user_email,
@@ -3853,6 +3906,7 @@ exports.viewLabourAttendanceBySiteInchargeId = async (req, res) => {
           id: attendance.id,
           labour_assignment_id: attendance.labour_assignment_id,
           shift: attendance.shift,
+          shift_cost: attendance.shift_cost,
           entry_date: attendance.entry_date,
           remarks: attendance.remarks,
           created_by: attendance.created_by,
@@ -3872,6 +3926,7 @@ exports.viewLabourAttendanceBySiteInchargeId = async (req, res) => {
           labour_attendance_id: edit.labour_attendance_id,
           labour_assignment_id: edit.labour_assignment_id,
           shift: edit.shift,
+          shift_cost: edit.shift_cost,
           remarks: edit.remarks,
           created_by: edit.created_by,
           created_at: edit.created_at,
@@ -4596,7 +4651,7 @@ exports.viewAllLabourAttendance = async (req, res) => {
     // Fetch all labour attendance with joined labour details and user names/emails
     const [attendances] = await db.query(
       `SELECT 
-         la.id, la.labour_assignment_id, la.shift, la.entry_date, la.remarks, 
+         la.id, la.labour_assignment_id, la.shift, la.shift_cost, la.entry_date, la.remarks,
          la.created_by, la.created_at, la.updated_by, la.updated_at,
          uc.user_name as siteincharge_name, uc.user_email as siteincharge_email,
          uc.user_name as created_by_user_name, uc.user_email as created_by_user_email,
@@ -4616,7 +4671,7 @@ exports.viewAllLabourAttendance = async (req, res) => {
     for (const attendance of attendances) {
       const [editHistory] = await db.query(
         `SELECT 
-           eh.id, eh.labour_attendance_id, eh.labour_assignment_id, eh.shift, 
+           eh.id, eh.labour_attendance_id, eh.labour_assignment_id, eh.shift, eh.shift_cost,
            eh.remarks, eh.created_by, eh.updated_by, eh.created_at, eh.updated_at,
            ec.user_name as created_by_user_name, ec.user_email as created_by_user_email,
            eu.user_name as updated_by_user_name, eu.user_email as updated_by_user_email,
@@ -4636,6 +4691,7 @@ exports.viewAllLabourAttendance = async (req, res) => {
           id: attendance.id,
           labour_assignment_id: attendance.labour_assignment_id,
           shift: attendance.shift,
+          shift_cost: attendance.shift_cost,
           entry_date: attendance.entry_date,
           remarks: attendance.remarks,
           created_by: attendance.created_by,
@@ -4657,6 +4713,7 @@ exports.viewAllLabourAttendance = async (req, res) => {
           labour_attendance_id: edit.labour_attendance_id,
           labour_assignment_id: edit.labour_assignment_id,
           shift: edit.shift,
+          shift_cost: edit.shift_cost,
           remarks: edit.remarks,
           created_by: edit.created_by,
           created_at: edit.created_at,
@@ -5635,7 +5692,7 @@ exports.adminSaveLabourAttendance = async (req, res) => {
     const now = new Date();
 
     for (const data of attendance_data) {
-      const { labour_assignment_id, entry_date, shift, remarks, attendance_id } = data;
+      const { labour_assignment_id, entry_date, shift, shift_cost, remarks, attendance_id } = data;
 
       // Common validations
       if (!labour_assignment_id || isNaN(labour_assignment_id)) {
@@ -5654,6 +5711,17 @@ exports.adminSaveLabourAttendance = async (req, res) => {
       if (remarks && typeof remarks !== 'string') {
         return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
       }
+      const parsedShiftCost = shift_cost === undefined || shift_cost === null || shift_cost === ""
+        ? null
+        : Number(shift_cost);
+      if (parsedShiftCost !== null && (
+        !Number.isFinite(parsedShiftCost) ||
+        parsedShiftCost <= 0 ||
+        parsedShiftCost > 99999999.99 ||
+        Math.abs(parsedShiftCost * 100 - Math.round(parsedShiftCost * 100)) > 1e-8
+      )) {
+        return res.status(400).json({ status: 'error', message: 'shift_cost must be a positive amount' });
+      }
 
       const [assignment] = await db.query('SELECT id FROM labour_assignment WHERE id = ?', [labour_assignment_id]);
       if (assignment.length === 0) {
@@ -5670,7 +5738,7 @@ exports.adminSaveLabourAttendance = async (req, res) => {
 
         // Fetch current state for history
         const [existingAttendance] = await db.query(`
-          SELECT id, labour_assignment_id, shift, remarks, created_by, created_at, updated_at
+          SELECT id, labour_assignment_id, shift, shift_cost, remarks, created_by, created_at, updated_by, updated_at
           FROM labour_attendance 
           WHERE id = ?
         `, [attendanceId]);
@@ -5684,12 +5752,13 @@ exports.adminSaveLabourAttendance = async (req, res) => {
         // Insert current state into edit history
         await db.query(
           `INSERT INTO labour_attendance_edit_history
-           (labour_attendance_id, labour_assignment_id, shift, remarks, created_by, updated_by, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           (labour_attendance_id, labour_assignment_id, shift, shift_cost, remarks, created_by, updated_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             attendanceId,
             currentAttendance.labour_assignment_id,
             currentAttendance.shift,
+            currentAttendance.shift_cost,
             currentAttendance.remarks,
             currentAttendance.created_by,
             currentAttendance.updated_by,
@@ -5701,17 +5770,17 @@ exports.adminSaveLabourAttendance = async (req, res) => {
         // Update the attendance
         await db.query(
           `UPDATE labour_attendance
-           SET shift = ?, remarks = ?, updated_by = ?, updated_at = NOW()
+           SET shift = ?, shift_cost = COALESCE(?, shift_cost), remarks = ?, updated_by = ?, updated_at = NOW()
            WHERE id = ?`,
-          [parsedShift, remarks || null, created_by, attendanceId]
+          [parsedShift, parsedShiftCost, remarks || null, created_by, attendanceId]
         );
       } else {
         // Insert new attendance
         await db.query(
           `INSERT INTO labour_attendance 
-           (labour_assignment_id, shift, remarks, created_by, created_at, entry_date)
-           VALUES (?, ?, ?, ?, NOW(), ?)`,
-          [labour_assignment_id, parsedShift, remarks || null, created_by, entry_date]
+           (labour_assignment_id, shift, shift_cost, remarks, created_by, created_at, entry_date)
+           VALUES (?, ?, ?, ?, ?, NOW(), ?)`,
+          [labour_assignment_id, parsedShift, parsedShiftCost, remarks || null, created_by, entry_date]
         );
       }
     }

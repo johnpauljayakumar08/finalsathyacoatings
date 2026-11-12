@@ -1404,8 +1404,13 @@ exports.assignMaterial = async (req, res) => {
       if (!Number.isInteger(uom_id) || uom_id <= 0) {
         validationErrors.push(`Assignment ${index + 1}: uom_id is required and must be a positive integer`);
       }
-      if (!Number.isInteger(quantity) || quantity <= 0) {
-        validationErrors.push(`Assignment ${index + 1}: quantity is required and must be a positive integer`);
+      if (
+        typeof quantity !== "number" ||
+        !Number.isFinite(quantity) ||
+        quantity <= 0 ||
+        Math.abs(quantity * 100 - Math.round(quantity * 100)) > 1e-8
+      ) {
+        validationErrors.push(`Assignment ${index + 1}: quantity must be positive with up to 2 decimal places`);
       }
       if (!desc_id || typeof desc_id !== "string" || desc_id.trim() === "") {
         validationErrors.push(`Assignment ${index + 1}: desc_id is required and must be a non-empty string`);
@@ -2668,8 +2673,13 @@ exports.updateMaterialAssignment = async (req, res) => {
     if (!Number.isInteger(uom_id) || uom_id <= 0) {
       validationErrors.push("Valid uom_id is required");
     }
-    if (!Number.isInteger(quantity) || quantity <= 0) {
-      validationErrors.push("Valid quantity is required");
+    if (
+      typeof quantity !== "number" ||
+      !Number.isFinite(quantity) ||
+      quantity <= 0 ||
+      Math.abs(quantity * 100 - Math.round(quantity * 100)) > 1e-8
+    ) {
+      validationErrors.push("Quantity must be positive with up to 2 decimal places");
     }
     const parsedRate = parseFloat(rate);
     if (isNaN(parsedRate) || parsedRate < 0) {

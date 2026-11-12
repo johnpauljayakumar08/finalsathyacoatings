@@ -244,7 +244,6 @@ import SuppliedMaterials from './pages/supply/SuppliedMaterials';
 import MaterialAcknowledgement from './pages/site-incharge/MaterialAcknowledgement';
 import WorkAndMaterialEntry from './pages/site-incharge/WorkAndMaterialEntry';
 import BudgetExpenseEntry from './pages/site-incharge/BudgetExpenseEntry';
-import LabourAssign from './pages/site-incharge/LabourAssign';
 import LabourAttendance from './pages/site-incharge/LabourAttendance';
 import AdditionalExpense from './pages/site-incharge/AdditionalExpense';
 import SiteInchargeHistory from './pages/site-incharge/SiteInchargeHistory';
@@ -262,6 +261,7 @@ import DemEntries from './components/FinanceComponents/New/DEM';
 // === RESOURCE PAGES ===
 import EmployeeDetails from './pages/contract/EmployeeDetails';
 import ConsumablesPage from './pages/resource/ConsumablesPage';
+import LabourTeamMapping from './pages/resource/LabourTeamMapping';
 
 const Placeholder = ({ title }) => (
   <div className="p-4">
@@ -376,6 +376,7 @@ const App = () => {
           {/* Resources */}
           <Route path="/:rolePrefix/resource/employee-details/:encodedUserId" element={<ProtectedRoute roles={['admin', 'superadmin']}><EmployeeDetails /></ProtectedRoute>} />
           <Route path="/:rolePrefix/resource/consumables/:encodedUserId" element={<ProtectedRoute roles={['admin', 'superadmin']}><ConsumablesPage /></ProtectedRoute>} />
+          <Route path="/:rolePrefix/resource/labour-team-mapping/:encodedUserId" element={<ProtectedRoute roles={['admin', 'superadmin']}><LabourTeamMapping /></ProtectedRoute>} />
 
           {/* Site Incharge */}
           <Route path="/site-incharge/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><Placeholder title="Site Incharge Home" /></ProtectedRoute>} />
@@ -384,7 +385,7 @@ const App = () => {
           <Route path="/site-incharge/work-and-material-entry/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><WorkAndMaterialEntry /></ProtectedRoute>} />
           <Route path="/site-incharge/material-usage/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><RedirectToWorkAndMaterialEntry /></ProtectedRoute>} />
           <Route path="/site-incharge/work-completion/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><RedirectToWorkAndMaterialEntry /></ProtectedRoute>} />
-          <Route path="/site-incharge/labor-assignment/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><LabourAssign /></ProtectedRoute>} />
+          <Route path="/site-incharge/labor-assignment/:encodedUserId" element={<RedirectToWorkAndMaterialEntry />} />
           <Route path="/site-incharge/labor-attendance/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><LabourAttendance /></ProtectedRoute>} />
           <Route path="/site-incharge/additional-expense/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><AdditionalExpense /></ProtectedRoute>} />
           <Route path="/site-incharge/siteincharge-history/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><SiteInchargeHistory /></ProtectedRoute>} />

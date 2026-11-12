@@ -1137,7 +1137,7 @@ CREATE TABLE `material_assign` (
   `site_id` varchar(30) NOT NULL,
   `item_id` varchar(50) NOT NULL,
   `uom_id` int NOT NULL,
-  `quantity` int NOT NULL,
+  `quantity` decimal(10,2) NOT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `comp_ratio_a` int DEFAULT NULL,
   `comp_ratio_b` int DEFAULT NULL,

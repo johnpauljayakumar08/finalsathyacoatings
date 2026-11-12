@@ -239,6 +239,7 @@ import {
   PanelsTopLeft,
   IdCardLanyard,
   Package2,
+  HardHat,
   ChevronDown,
   PanelLeftClose,
   PanelLeftOpen,
@@ -290,7 +291,6 @@ const getSidebarConfig = (role, encodedUserId) => {
             { label: 'Expense Entry', to: `/site-incharge/expense-entry/${encodedUserId}`, icon: Hammer },
             { label: 'Work & Material Entry', to: `/site-incharge/work-and-material-entry/${encodedUserId}`, icon: Hammer },
             { label: 'Material Acknowledgment', to: `/site-incharge/material-acknowledgment/${encodedUserId}`, icon: Hammer },
-            { label: 'Labor Assignment', to: `/site-incharge/labor-assignment/${encodedUserId}`, icon: Hammer },
             { label: 'Labor Attendance', to: `/site-incharge/labor-attendance/${encodedUserId}`, icon: Hammer },
             { label: 'Additional Expenses', to: `/site-incharge/additional-expense/${encodedUserId}`, icon: Hammer },
             { label: 'Site Incharge History', to: `/site-incharge/siteincharge-history/${encodedUserId}`, icon: Hammer },
@@ -426,6 +426,9 @@ const getSidebarConfig = (role, encodedUserId) => {
         icon: SwatchBook,
         items: [
           { label: 'Employee Details', to: `/${prefix}/resource/employee-details/${encodedUserId}`, icon: IdCardLanyard },
+          ...(role === 'admin' || role === 'superadmin'
+            ? [{ label: 'Labour Head Mapping', to: `/${prefix}/resource/labour-team-mapping/${encodedUserId}`, icon: HardHat }]
+            : []),
           { label: 'Consumables', to: `/${prefix}/resource/consumables/${encodedUserId}`, icon: Package2 },
         ],
       },

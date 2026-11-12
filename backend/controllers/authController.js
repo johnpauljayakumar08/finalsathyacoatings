@@ -37,15 +37,21 @@ const createOtpDigest = (challengeId, otp) => crypto
 const sendManagingDirectorOtp = async user => {
   const { SMTP_HOST, SMTP_USER, SMTP_PASS } = process.env;
   const recipient = normalizeRole(user.role_name) === 'admin' ? process.env.ADMIN_OTP_EMAIL : process.env.MD_OTP_EMAIL;
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS || !recipient) {
-    const error = new Error('Admin/MD OTP email is not configured');
+  const missingSettings = [
+    !SMTP_HOST && 'SMTP_HOST',
+    !SMTP_USER && 'SMTP_USER',
+    !SMTP_PASS && 'SMTP_PASS',
+    !recipient && (normalizeRole(user.role_name) === 'admin' ? 'ADMIN_OTP_EMAIL' : 'MD_OTP_EMAIL')
+  ].filter(Boolean);
+  if (missingSettings.length > 0) {
+    const error = new Error(`Login OTP email configuration is missing: ${missingSettings.join(', ')}`);
     error.statusCode = 503;
     throw error;
   }
 
   const [recentRequests] = await db.query(
     `SELECT COUNT(*) AS count FROM md_login_otp_challenges
-     WHERE user_id = ? AND created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 10 MINUTE)`,
+     WHERE user_id = ? AND email_sent_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 10 MINUTE)`,
     [user.user_id]
   );
   if (Number(recentRequests[0]?.count || 0) >= 5) {
@@ -79,6 +85,10 @@ const sendManagingDirectorOtp = async user => {
       text: `Your login code is ${otp}. It expires in 5 minutes. If you did not try to sign in, ignore this email.`,
       html: `<p>Your Sathya Coatings login code is:</p><p style="font-size:24px;font-weight:bold;letter-spacing:4px">${otp}</p><p>This code expires in 5 minutes. If you did not try to sign in, ignore this email.</p>`
     });
+    await db.query(
+      'UPDATE md_login_otp_challenges SET email_sent_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [result.insertId]
+    );
   } catch (error) {
     await db.query('UPDATE md_login_otp_challenges SET used_at = CURRENT_TIMESTAMP WHERE id = ?', [result.insertId]);
     throw error;
@@ -116,6 +126,20 @@ exports.login = async (req, res) => {
 
     res.status(200).json(createLoginSession(user));
   } catch (error) {
+    if (error.statusCode === 503) {
+      console.error(error.message);
+      return res.status(503).json({ error: error.message });
+    }
+    if (error.code === 'EAUTH' && String(error.command || '').startsWith('AUTH')) {
+      console.error("Login OTP email authentication failed:", {
+        code: error.code,
+        responseCode: error.responseCode,
+        command: error.command
+      });
+      return res.status(503).json({
+        error: 'Gmail blocked SMTP sign-in. Sign in to the SMTP_USER account in a browser and complete any security prompt. Then use a new Google App Password (not your regular Gmail password) as SMTP_PASS in backend/.env and restart the backend.'
+      });
+    }
     console.error("Error during login:", error);
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : "Internal Server Error" });
   }

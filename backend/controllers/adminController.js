@@ -1233,7 +1233,7 @@ exports.addLabour = async (req, res) => {
   const {
     full_name, date_of_birth, date_of_joining, mobile, company_email,
     current_address, permanent_address, gender_id, emp_type_id, designation_id,
-    status_id, esic_number, pf_number, site_engineer_emp_id, aadhaar_number,
+    status_id, esic_number, pf_number, aadhaar_number,
     approved_salary, created_by
   } = req.body;
   const company = "Sathya Coatings";
@@ -1241,7 +1241,7 @@ exports.addLabour = async (req, res) => {
   // Validate required fields
   if (!full_name || !date_of_birth || !date_of_joining || !mobile ||
       !company_email || !current_address || !permanent_address || !gender_id ||
-      !emp_type_id || !designation_id || !status_id || !site_engineer_emp_id ||
+      !emp_type_id || !designation_id || !status_id ||
       !aadhaar_number || !approved_salary || !created_by) {
     return res.status(400).json({
       success: false,
@@ -1306,20 +1306,6 @@ exports.addLabour = async (req, res) => {
     });
   }
 
-  const [siteEngineer] = await db.query(
-    `SELECT em.emp_id
-     FROM employee_master em
-     JOIN emp_designation ed ON ed.id = em.designation_id
-     WHERE em.emp_id = ? AND LOWER(TRIM(ed.designation)) = 'site engineer'`,
-    [site_engineer_emp_id]
-  );
-  if (!siteEngineer.length) {
-    return res.status(400).json({
-      success: false,
-      message: "Selected employee is not a valid Site Engineer"
-    });
-  }
-
   // Validate foreign keys (add similar checks as in addEmployee if needed)
   // Assuming similar foreign key validations for gender_id, dept_id, etc.
 
@@ -1336,7 +1322,7 @@ exports.addLabour = async (req, res) => {
         full_name, date_of_birth, date_of_joining, company, mobile, company_email,
         current_address, permanent_address, gender_id, emp_type_id, designation_id,
         status_id, esic_number || null, pf_number || null, salaryValue, created_by,
-        site_engineer_emp_id, aadhaar_number
+        null, aadhaar_number
       ]
     );
 
@@ -1463,7 +1449,6 @@ exports.importLabours = async (req, res) => {
         emp_type_id: lookupMaps.employment_type.get(text(row?.employment_type).toLowerCase()),
         designation_id: lookupMaps.designation.get(text(row?.designation).toLowerCase()),
         status_id: lookupMaps.status.get(text(row?.status).toLowerCase()),
-        site_engineer_emp_id: text(row?.site_engineer_emp_id),
         aadhaar_number: text(row?.aadhaar_number),
         approved_salary: text(row?.approved_salary),
         esic_number: text(row?.esic_number) || null,
@@ -1472,7 +1457,7 @@ exports.importLabours = async (req, res) => {
       const errors = [];
 
       for (const field of ["full_name", "mobile", "company_email", "current_address",
-        "permanent_address", "site_engineer_emp_id", "aadhaar_number", "approved_salary"]) {
+        "permanent_address", "aadhaar_number", "approved_salary"]) {
         if (!labour[field]) errors.push(`${field.replaceAll("_", " ")} is required`);
       }
       if (!isRealDate(labour.date_of_birth)) errors.push("date of birth must be a valid YYYY-MM-DD date");
@@ -1514,30 +1499,6 @@ exports.importLabours = async (req, res) => {
       });
     }
 
-    const engineerIds = [...new Set(normalizedLabours.map((labour) => labour.site_engineer_emp_id))];
-    const [siteEngineers] = await connection.query(
-      `SELECT em.emp_id
-       FROM employee_master em
-       JOIN emp_designation ed ON ed.id = em.designation_id
-       WHERE em.emp_id IN (?) AND LOWER(TRIM(ed.designation)) = 'site engineer'`,
-      [engineerIds]
-    );
-    const validEngineerIds = new Set(siteEngineers.map((row) => row.emp_id));
-    const invalidEngineerRows = normalizedLabours
-      .map((labour) => validEngineerIds.has(labour.site_engineer_emp_id) ? null : {
-        row: labour.spreadsheet_row,
-        errors: [`"${labour.site_engineer_emp_id}" is not a valid Site Engineer employee ID`],
-      })
-      .filter(Boolean);
-    if (invalidEngineerRows.length) {
-      await connection.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Correct the listed Site Engineer IDs and upload again. No labour records were added.",
-        errors: invalidEngineerRows,
-      });
-    }
-
     const emails = normalizedLabours.map((labour) => labour.company_email);
     const aadhaars = normalizedLabours.map((labour) => labour.aadhaar_number);
     const [existingLabours] = await connection.query(
@@ -1575,7 +1536,7 @@ exports.importLabours = async (req, res) => {
           labour.full_name, labour.date_of_birth, labour.date_of_joining, company, labour.mobile,
           labour.company_email, labour.current_address, labour.permanent_address, labour.gender_id,
           labour.emp_type_id, labour.designation_id, labour.status_id, labour.esic_number,
-          labour.pf_number, labour.approved_salary, created_by, labour.site_engineer_emp_id,
+          labour.pf_number, labour.approved_salary, created_by, null,
           labour.aadhaar_number,
         ]
       );
@@ -1870,6 +1831,118 @@ exports.getLabourEmployees = async (req, res) => {
   } catch (error) {
     console.error("Error fetching labour employees:", error);
     res.status(500).json({ success: false, message: "Failed to fetch labour employees" });
+  }
+};
+
+exports.getLabourTeamMappings = async (req, res) => {
+  try {
+    const [[labourEmployees], [mappings]] = await Promise.all([
+      db.query(
+        "SELECT id, full_name, approved_salary FROM labour WHERE status_id = 1 ORDER BY full_name"
+      ),
+      db.query(
+        `SELECT team.head_labour_id, team.member_labour_id,
+                head.full_name AS head_name, member.full_name AS member_name
+         FROM labour_team_members team
+         JOIN labour head ON head.id = team.head_labour_id
+         JOIN labour member ON member.id = team.member_labour_id
+         WHERE head.status_id = 1 AND member.status_id = 1
+         ORDER BY head.full_name, member.full_name`
+      )
+    ]);
+    res.status(200).json({ success: true, data: { labourEmployees, mappings } });
+  } catch (error) {
+    console.error("Error fetching labour team mappings:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch labour team mappings" });
+  }
+};
+
+exports.saveLabourTeamMapping = async (req, res) => {
+  const headId = Number(req.body.head_labour_id);
+  const memberIds = req.body.member_labour_ids;
+  if (!Number.isInteger(headId) || headId <= 0 || !Array.isArray(memberIds)) {
+    return res.status(400).json({
+      success: false,
+      message: "A valid labour head and a list of team members are required"
+    });
+  }
+  const parsedMemberIds = memberIds.map(Number);
+  if (
+    parsedMemberIds.some(id => !Number.isInteger(id) || id <= 0) ||
+    parsedMemberIds.includes(headId) ||
+    new Set(parsedMemberIds).size !== parsedMemberIds.length
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "Team members must be unique valid labourers and cannot include the selected head"
+    });
+  }
+
+  let connection;
+  try {
+    const labourIds = [headId, ...parsedMemberIds];
+    const [activeLabours] = await db.query(
+      "SELECT id FROM labour WHERE status_id = 1 AND id IN (?)",
+      [labourIds]
+    );
+    if (activeLabours.length !== labourIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "The selected head or one or more team members are unavailable"
+      });
+    }
+
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    const [headAssignments] = await connection.query(
+      "SELECT head_labour_id FROM labour_team_members WHERE member_labour_id = ?",
+      [headId]
+    );
+    if (headAssignments.length) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "A labourer who is already a team member cannot also be assigned as a head"
+      });
+    }
+
+    if (parsedMemberIds.length) {
+      const [membersWithTeams] = await connection.query(
+        "SELECT head_labour_id FROM labour_team_members WHERE head_labour_id IN (?)",
+        [parsedMemberIds]
+      );
+      const [membersAssignedElsewhere] = await connection.query(
+        "SELECT member_labour_id FROM labour_team_members WHERE member_labour_id IN (?) AND head_labour_id <> ?",
+        [parsedMemberIds, headId]
+      );
+      if (membersWithTeams.length || membersAssignedElsewhere.length) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "A team member cannot also be a head or belong to another head"
+        });
+      }
+    }
+
+    await connection.query(
+      "DELETE FROM labour_team_members WHERE head_labour_id = ?",
+      [headId]
+    );
+    if (parsedMemberIds.length) {
+      await connection.query(
+        "INSERT INTO labour_team_members (head_labour_id, member_labour_id) VALUES ?",
+        [parsedMemberIds.map(memberId => [headId, memberId])]
+      );
+    }
+    await connection.commit();
+    res.status(200).json({ success: true, message: "Labour team mapping saved successfully" });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error("Error saving labour team mapping:", error);
+    res.status(500).json({ success: false, message: "Failed to save labour team mapping" });
+  } finally {
+    if (connection) connection.release();
   }
 };
 

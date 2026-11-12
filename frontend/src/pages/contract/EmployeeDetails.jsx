@@ -19,7 +19,6 @@ const LABOUR_IMPORT_COLUMNS = [
   { header: "Employment Type", key: "employment_type" },
   { header: "Designation", key: "designation" },
   { header: "Status", key: "status" },
-  { header: "Site Engineer Employee ID", key: "site_engineer_emp_id" },
   { header: "Aadhaar Number", key: "aadhaar_number" },
   { header: "Approved Salary Per Shift", key: "approved_salary" },
   { header: "ESIC Number (Optional)", key: "esic_number" },
@@ -104,7 +103,6 @@ const EmployeeDetails = () => {
         "Contract",
         "Labour",
         "Active",
-        "EMP001",
         "123456789012",
         "1000.00",
         "",
@@ -177,7 +175,6 @@ const EmployeeDetails = () => {
         ["The Sample Data and Fixed Employee Sample sheets contain fictitious examples. Do not import the sample rows."],
         ["Dates must be real dates or text in YYYY-MM-DD format."],
         ["Gender, Employment Type, Designation, and Status must match values configured in the application."],
-        ["Site Engineer Employee ID must belong to an employee with the Site Engineer designation."],
         ["Enter Mobile and Aadhaar Number as text to preserve all digits."],
         ["Salary accepts whole numbers (for example, 25000) or up to 2 decimal places (for example, 25000.50). Comma-separated thousands are also accepted."],
         ["Company is automatically set to Sathya Coatings. ESIC and PF numbers are optional."],
@@ -440,7 +437,7 @@ const EmployeeDetails = () => {
       Swal.fire({
         position: "top-end",
         icon: "success",
-        title: newEmployeeData.site_engineer_emp_id || newEmployeeData.contractor_id
+        title: newEmployeeData.aadhaar_number || newEmployeeData.contractor_id
           ? "Labor Added Successfully!"
           : "Fixed Employee Added Successfully!",
         showConfirmButton: false,

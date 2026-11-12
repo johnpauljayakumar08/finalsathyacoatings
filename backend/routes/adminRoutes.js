@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const adminController = require('../controllers/adminController');
+const authorizeAdmin = require('../middleware/authorizeAdmin');
 
 // Route to get all companies
 router.get('/companies', adminController.getCompanies);
@@ -61,6 +62,8 @@ router.post('/import-labours', adminController.importLabours);
 router.post('/import-employees', adminController.importEmployees);
 
 router.get("/labour", adminController.getLabourEmployees);
+router.get("/labour-team-mappings", authorizeAdmin, adminController.getLabourTeamMappings);
+router.post("/labour-team-mappings", authorizeAdmin, adminController.saveLabourTeamMapping);
 router.post("/save-labour-assignment", adminController.saveLabourAssignment);
 
 // Updated route

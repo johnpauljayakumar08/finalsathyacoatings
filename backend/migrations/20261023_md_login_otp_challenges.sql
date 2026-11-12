@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS md_login_otp_challenges (
   expires_at DATETIME NOT NULL,
   used_at DATETIME DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  email_sent_at DATETIME DEFAULT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_md_login_challenge_hash (challenge_hash),
   KEY idx_md_login_user_created (user_id, created_at),
