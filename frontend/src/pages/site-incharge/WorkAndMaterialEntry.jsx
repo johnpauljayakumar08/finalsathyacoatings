@@ -1315,6 +1315,14 @@ const WorkAndMaterialEntry = () => {
                     const details = budgetExpenseData[budget.id] || {};
                     const entries = details.entries || [];
                     const forms = budgetExpenseForms[budget.id] ?? [{ id: "new" }];
+                    const allocatedBudget = Number(budget.splitted_budget) || 0;
+                    const spentToDate = Number(
+                      details.total_cumulative?.actual_value ?? details.cumulative?.actual_value
+                    ) || 0;
+                    const overBudgetBy = Math.max(
+                      Number((spentToDate - allocatedBudget).toFixed(2)),
+                      0
+                    );
 
                     return (
                       <article key={budget.id} className="rounded-lg border border-gray-200 p-4">
@@ -1322,9 +1330,14 @@ const WorkAndMaterialEntry = () => {
                           <div>
                             <h3 className="font-semibold text-gray-800">{budget.expense_name}</h3>
                             <p className="text-xs text-gray-500">
-                              Budget: ₹{(Number(budget.splitted_budget) || 0).toFixed(2)}
-                              {" · "}Spent to date: ₹{(Number(details.cumulative?.actual_value) || 0).toFixed(2)}
+                              Budget: ₹{allocatedBudget.toFixed(2)}
+                              {" · "}Spent to date: ₹{spentToDate.toFixed(2)}
                             </p>
+                            {overBudgetBy > 0 && (
+                              <p className="mt-1 text-xs font-medium text-red-600">
+                                Over budget by ₹{overBudgetBy.toFixed(2)}. Other budget allocations were not changed.
+                              </p>
+                            )}
                           </div>
                           <button
                             type="button"

@@ -1,126 +1,19 @@
 const db = require('../config/db');
 
-const ensureBudgetHeadFunds = async (
-  connection,
-  { actualBudgetId, requiredSpend, adjustedBy, entryDate, expenseEntryId }
-) => {
-  const [targetRows] = await connection.query(
-    `SELECT id, po_budget_id, overhead_id, splitted_budget
+const getBudgetHeadAllocation = async (connection, actualBudgetId) => {
+  const [rows] = await connection.query(
+    `SELECT id, splitted_budget
      FROM actual_budget
-     WHERE id = ?`,
+     WHERE id = ?
+     FOR UPDATE`,
     [actualBudgetId]
   );
-  if (targetRows.length === 0) {
+  if (rows.length === 0) {
     const error = new Error(`Invalid actual_budget_id (${actualBudgetId}): record does not exist`);
     error.statusCode = 400;
     throw error;
   }
-  const target = targetRows[0];
-
-  const [budgetRows] = await connection.query(
-    `SELECT ab.id, ab.overhead_id, ab.splitted_budget, ab.actual_value, o.expense_name
-     FROM actual_budget ab
-     JOIN overhead o ON o.id = ab.overhead_id
-     WHERE ab.po_budget_id = ?
-     ORDER BY ab.id
-     FOR UPDATE`,
-    [target.po_budget_id]
-  );
-  const budgetIds = budgetRows.map(row => row.id);
-  const [historyRows] = await connection.query(
-    `SELECT actual_budget_id, COALESCE(SUM(actual_value), 0) AS history_spent
-     FROM actual_budget_history
-     WHERE actual_budget_id IN (?)
-     GROUP BY actual_budget_id`,
-    [budgetIds]
-  );
-  const historyByBudgetId = new Map(
-    historyRows.map(row => [Number(row.actual_budget_id), Number(row.history_spent) || 0])
-  );
-  const targetBudget = budgetRows.find(row => Number(row.id) === Number(actualBudgetId));
-  const targetAllocation = Number(targetBudget.splitted_budget) || 0;
-  let amountToTransfer = Math.max(requiredSpend - targetAllocation, 0);
-  const donors = budgetRows
-    .filter(row => Number(row.id) !== Number(actualBudgetId))
-    .map(row => {
-      const historySpent = historyByBudgetId.get(Number(row.id)) || 0;
-      const spent = Math.max(historySpent, Number(row.actual_value) || 0);
-      return {
-        row,
-        spent,
-        available: Math.max((Number(row.splitted_budget) || 0) - spent, 0)
-      };
-    })
-    .filter(donor => donor.available > 0)
-    .sort((a, b) => b.available - a.available);
-
-  const transferPlan = [];
-  for (const donor of donors) {
-    if (amountToTransfer <= 0) break;
-    const amount = Math.min(donor.available, amountToTransfer);
-    transferPlan.push({ ...donor, amount });
-    amountToTransfer = Number((amountToTransfer - amount).toFixed(2));
-  }
-
-  if (amountToTransfer > 0.009) {
-    const error = new Error(
-      `This expense exceeds the available budget by ₹${amountToTransfer.toFixed(2)}, and other budget heads do not have enough unspent balance.`
-    );
-    error.statusCode = 400;
-    throw error;
-  }
-
-  let adjustedAllocation = targetAllocation;
-  for (const transfer of transferPlan) {
-    const donorAllocation = Number(transfer.row.splitted_budget) || 0;
-    const newDonorAllocation = Number((donorAllocation - transfer.amount).toFixed(2));
-    adjustedAllocation = Number((adjustedAllocation + transfer.amount).toFixed(2));
-    await connection.query(
-      `UPDATE actual_budget
-       SET splitted_budget = ?, difference_value = ?, updated_by = ?, updated_at = NOW()
-       WHERE id = ?`,
-      [newDonorAllocation, Number((newDonorAllocation - transfer.spent).toFixed(2)), adjustedBy, transfer.row.id]
-    );
-    await connection.query(
-      `INSERT INTO actual_budget_adjustment_history
-       (po_budget_id, source_actual_budget_id, target_actual_budget_id,
-        source_overhead_id, target_overhead_id, amount, entry_date,
-        expense_history_id, adjusted_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        target.po_budget_id,
-        transfer.row.id,
-        actualBudgetId,
-        transfer.row.overhead_id,
-        target.overhead_id,
-        transfer.amount,
-        entryDate,
-        expenseEntryId || null,
-        adjustedBy
-      ]
-    );
-  }
-
-  if (transferPlan.length > 0) {
-    await connection.query(
-      `UPDATE actual_budget
-       SET splitted_budget = ?, updated_by = ?, updated_at = NOW()
-       WHERE id = ?`,
-      [adjustedAllocation, adjustedBy, actualBudgetId]
-    );
-  }
-
-  return {
-    allocatedBudget: adjustedAllocation,
-    transferredAmount: transferPlan.reduce((total, transfer) => total + transfer.amount, 0),
-    allocationChanges: transferPlan.map(transfer => ({
-      actual_budget_id: transfer.row.id,
-      splitted_budget: Number((Number(transfer.row.splitted_budget) - transfer.amount).toFixed(2))
-    })).concat(transferPlan.length > 0 ? [{
-      actual_budget_id: actualBudgetId,
-      splitted_budget: adjustedAllocation
-    }] : [])
-  };
+  return Number(rows[0].splitted_budget) || 0;
 };
 
 exports.getCompletionEntries = async (req, res) => {
@@ -2505,6 +2398,8 @@ exports.saveBudgetExpense = async (req, res) => {
     connection = await db.getConnection();
     await connection.beginTransaction();
 
+    const allocatedBudget = await getBudgetHeadAllocation(connection, budgetId);
+
     // Get current cumulative actual_value before any changes
     const [currentActual] = await connection.query(
       `SELECT COALESCE(SUM(actual_value), 0) AS actual_value
@@ -2534,14 +2429,8 @@ exports.saveBudgetExpense = async (req, res) => {
       ]
     );
 
-    const adjustment = await ensureBudgetHeadFunds(connection, {
-      actualBudgetId: budgetId,
-      requiredSpend: newActual,
-      adjustedBy: created_by,
-      entryDate: entry_date,
-      expenseEntryId: insertResult.insertId
-    });
-    const newDifference = adjustment.allocatedBudget - newActual;
+    const newDifference = Number((allocatedBudget - newActual).toFixed(2));
+    const overBudgetBy = Math.max(Number((newActual - allocatedBudget).toFixed(2)), 0);
 
     await connection.query(
       `UPDATE actual_budget
@@ -2562,13 +2451,13 @@ exports.saveBudgetExpense = async (req, res) => {
     await connection.commit();
     res.status(201).json({
       status: 'success',
-      message: adjustment.transferredAmount > 0
-        ? `Budget expense saved; ₹${adjustment.transferredAmount.toFixed(2)} was adjusted from other budget heads.`
-        : 'Budget expense saved successfully',
+      message: overBudgetBy > 0
+        ? `Budget expense saved; this head is over budget by ₹${overBudgetBy.toFixed(2)}. Other budget allocations were not changed.`
+        : 'Budget expense saved successfully. Other budget allocations were not changed.',
       data: {
         entry_id: insertResult.insertId,
-        adjusted_amount: adjustment.transferredAmount,
-        allocation_changes: adjustment.allocationChanges
+        adjusted_amount: 0,
+        allocation_changes: []
       }
     });
 
@@ -2725,6 +2614,8 @@ exports.updateBudgetExpenseEntry = async (req, res) => {
     }
 
     const budgetId = currentEntry.actual_budget_id;
+    const allocatedBudget = await getBudgetHeadAllocation(connection, budgetId);
+
     // Calculate current total expense without this entry
     const [totalExpenseWithoutThis] = await connection.query(
       `SELECT COALESCE(SUM(actual_value), 0) AS total_expense
@@ -2738,13 +2629,7 @@ exports.updateBudgetExpenseEntry = async (req, res) => {
     const oldValue = parseFloat(currentEntry.actual_value) || 0;
     const newActualValue = validatedActualValue !== null ? validatedActualValue : oldValue;
     const newTotal = currTotalWithoutThis + newActualValue;
-    const adjustment = await ensureBudgetHeadFunds(connection, {
-      actualBudgetId: budgetId,
-      requiredSpend: newTotal,
-      adjustedBy: updated_by,
-      entryDate: currentEntry.entry_date,
-      expenseEntryId: entryId
-    });
+    const overBudgetBy = Math.max(Number((newTotal - allocatedBudget).toFixed(2)), 0);
 
     // Insert current (old) state into edit_history BEFORE updating
     console.log('Inserting into edit history table...');
@@ -2802,7 +2687,7 @@ exports.updateBudgetExpenseEntry = async (req, res) => {
     // Recalculate and update cumulative in actual_budget
     console.log('Recalculating cumulative in actual_budget...');
     const newCumulativeTotal = newTotal;
-    const newDifference = adjustment.allocatedBudget - newCumulativeTotal;
+    const newDifference = Number((allocatedBudget - newCumulativeTotal).toFixed(2));
 
     await connection.query(
       `UPDATE actual_budget 
@@ -2818,16 +2703,16 @@ exports.updateBudgetExpenseEntry = async (req, res) => {
     await connection.commit();
     res.status(200).json({
       status: 'success',
-      message: adjustment.transferredAmount > 0
-        ? `Budget expense updated; ₹${adjustment.transferredAmount.toFixed(2)} was adjusted from other budget heads.`
-        : 'Budget expense entry updated successfully',
+      message: overBudgetBy > 0
+        ? `Budget expense updated; this head is over budget by ₹${overBudgetBy.toFixed(2)}. Other budget allocations were not changed.`
+        : 'Budget expense entry updated successfully. Other budget allocations were not changed.',
       data: {
         entry_id: entryId,
         actual_budget_id: budgetId,
         actual_value: newActualValue,
         remarks: remarks || null,
-        adjusted_amount: adjustment.transferredAmount,
-        allocation_changes: adjustment.allocationChanges,
+        adjusted_amount: 0,
+        allocation_changes: [],
         updated_at: new Date().toISOString()
       }
     });
@@ -5552,10 +5437,6 @@ exports.adminUpdateBudgetExpenseEntry = async (req, res) => {
     const newActualValue = validatedActualValue !== null ? validatedActualValue : oldValue;
     const newTotal = currTotalWithoutThis + newActualValue;
 
-    if (newTotal > maxBudget) {
-      return res.status(400).json({ status: 'error', message: `Expense would exceed splitted budget (${maxBudget.toFixed(2)}) after update` });
-    }
-
     // Insert current (old) state into edit_history BEFORE updating
     console.log('Inserting into edit history table...');
     await db.query(
@@ -5619,6 +5500,7 @@ exports.adminUpdateBudgetExpenseEntry = async (req, res) => {
     );
     const newCumulativeTotal = parseFloat(newTotalCumulative[0].new_total) || 0;
     const newDifference = maxBudget - newCumulativeTotal;
+    const overBudgetBy = Math.max(Number((newCumulativeTotal - maxBudget).toFixed(2)), 0);
 
     await db.query(
       `UPDATE actual_budget 
@@ -5633,7 +5515,9 @@ exports.adminUpdateBudgetExpenseEntry = async (req, res) => {
 
     res.status(200).json({
       status: 'success',
-      message: 'Budget expense entry updated successfully (Admin mode)',
+      message: overBudgetBy > 0
+        ? `Budget expense updated; this head is over budget by ₹${overBudgetBy.toFixed(2)}. Other budget allocations were not changed.`
+        : 'Budget expense entry updated successfully. Other budget allocations were not changed.',
       data: {
         entry_id: entryId,
         actual_budget_id: budgetId,
