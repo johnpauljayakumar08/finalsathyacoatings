@@ -2,7 +2,11 @@
 const express = require("express");
 const router = express.Router();
 const SiteInchargeController = require("../controllers/SiteInchargeController");
+const ReportsController = require("../controllers/reportsController");
+const authorizeReports = require("../middleware/authorizeReports");
 
+router.get("/reports/filters", authorizeReports, ReportsController.getReportFilters);
+router.get("/reports/site-operations", authorizeReports, ReportsController.getSiteOperationsReports);
 router.get("/completion-entries", SiteInchargeController.getCompletionEntries);
 router.post("/completion-status", SiteInchargeController.saveCompletionStatus);
 router.put("/update-completion-entry", SiteInchargeController.updateCompletionEntry);

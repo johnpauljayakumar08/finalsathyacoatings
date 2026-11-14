@@ -271,6 +271,9 @@ const getTopMenus = (role, encodedUserId) => {
     { id: 3, name: 'Supply Management', path: `/${prefix}/supply/master-client/${encodedUserId}`, activePath: `/${prefix}/supply`, icon: Package },
     { id: 4, name: 'Finance Management', path: `/${prefix}/finance/bank-statement-consolidation/${encodedUserId}`, activePath: `/${prefix}/finance`, icon: IndianRupee },
     { id: 5, name: 'Resource Management', path: `/${prefix}/resource/employee-details/${encodedUserId}`, activePath: `/${prefix}/resource`, icon: SwatchBook },
+    ...(['admin', 'superadmin', 'managing_director'].includes(role) ? [
+      { id: 7, name: 'Reports', path: `/${prefix}/reports/site-operations/${encodedUserId}`, activePath: `/${prefix}/reports`, icon: FileSpreadsheet },
+    ] : []),
     { id: 6, name: 'Site Incharge', path: `/site-incharge/${encodedUserId}`, activePath: '/site-incharge', icon: Users },
     { id: 99, name: 'User', path: '#', activePath: '#', icon: User },
   ];
@@ -305,8 +308,24 @@ const getSidebarConfig = (role, encodedUserId) => {
   const supplyKey     = `/${prefix}/supply`;
   const financeKey    = `/${prefix}/finance`;
   const resourcesKey  = `/${prefix}/resource`;
+  const reportsKey    = `/${prefix}/reports`;
 
   return {
+    ...(['admin', 'superadmin', 'managing_director'].includes(role) ? {
+      [reportsKey]: [
+        {
+          title: 'Reports',
+          icon: FileSpreadsheet,
+          items: [
+            {
+              label: 'Site Operations Reports',
+              to: `/${prefix}/reports/site-operations/${encodedUserId}`,
+              icon: ChartNoAxesCombined
+            }
+          ]
+        }
+      ]
+    } : {}),
     [dashboardKey]: [
       {
         title: 'Overview',

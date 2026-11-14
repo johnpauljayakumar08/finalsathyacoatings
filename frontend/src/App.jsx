@@ -247,6 +247,7 @@ import BudgetExpenseEntry from './pages/site-incharge/BudgetExpenseEntry';
 import LabourAttendance from './pages/site-incharge/LabourAttendance';
 import AdditionalExpense from './pages/site-incharge/AdditionalExpense';
 import SiteInchargeHistory from './pages/site-incharge/SiteInchargeHistory';
+import SiteOperationsReports from './pages/reports/SiteOperationsReports';
 
 // === FINANCE PAGES - UPDATED ===
 import BankStatementConsolidation from './components/FinanceComponents/New/BankStatementConsolidation';
@@ -303,6 +304,10 @@ const App = () => {
           <Route
             path="/:rolePrefix/dashboard/:encodedUserId"
             element={<ProtectedRoute roles={['admin', 'superadmin', 'accounts_team']}><DashboardMain /></ProtectedRoute>}
+          />
+          <Route
+            path="/:rolePrefix/reports/site-operations/:encodedUserId"
+            element={<ProtectedRoute roles={['admin', 'superadmin', 'managing_director']}><SiteOperationsReports /></ProtectedRoute>}
           />
 
           {/* ====================== FINANCE SECTION - UPDATED ====================== */}
