@@ -406,7 +406,7 @@ const ConsumableDispatch = ({ masterConsumables }) => {
                         <Select
                           options={masterConsumables.map(c => ({
                             value: c.id,
-                            label: `${c.name} (${c.consumableStatus})`,
+                            label: `${c.name} (${c.consumableStatus === 'multi use' ? 'Consumable Fixed' : 'Consumable Variable'})`,
                           }))}
                           value={item.consumable}
                           onChange={val => updateItem(item.id, 'consumable', val)}

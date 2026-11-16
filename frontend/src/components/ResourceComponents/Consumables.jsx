@@ -812,6 +812,10 @@ const toSelectOptions = (values) => {
   return [...options.values()].sort((a, b) => a.label.localeCompare(b.label));
 };
 
+const getConsumableTypeLabel = (usageType) => (
+  usageType === 'multi use' ? 'Consumable Fixed' : 'Consumable Variable'
+);
+
 const Consumables = () => {
   const [masterConsumables, setMasterConsumables] = useState([]);
   const [filteredConsumables, setFilteredConsumables] = useState([]);
@@ -1089,7 +1093,7 @@ const Consumables = () => {
                       usageFilter === 'single use' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
                   >
-                    Single Use
+                    Consumable Variable
                   </button>
                   <button
                     onClick={() => setUsageFilter('multi use')}
@@ -1097,7 +1101,7 @@ const Consumables = () => {
                       usageFilter === 'multi use' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
                   >
-                    Multi Use
+                    Consumable Fixed
                   </button>
                 </div>
               </div>
@@ -1141,7 +1145,7 @@ const Consumables = () => {
                           <span className={`inline-flex px-4 py-1.5 text-sm font-medium rounded-full ${
                             item.consumableStatus === 'multi use' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-amber-100 text-amber-800 border border-amber-200'
                           }`}>
-                            {item.consumableStatus}
+                            {getConsumableTypeLabel(item.consumableStatus)}
                           </span>
                         </td>
                       </tr>
@@ -1287,8 +1291,8 @@ const Consumables = () => {
                       required
                       disabled={adding}
                     >
-                      <option value="single use">Single use (disposable)</option>
-                      <option value="multi use">Multi use (reusable)</option>
+                      <option value="single use">Consumable Variable</option>
+                      <option value="multi use">Consumable Fixed</option>
                     </select>
                   </div>
                 </div>
