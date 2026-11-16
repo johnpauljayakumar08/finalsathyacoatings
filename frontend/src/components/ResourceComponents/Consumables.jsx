@@ -799,7 +799,18 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import Swal from 'sweetalert2';
 import { Filter } from 'lucide-react';
+import CreatableSelect from 'react-select/creatable';
 import ConsumableDispatch from './ConsumableDispatch'; // ← new component
+
+const toSelectOptions = (values) => {
+  const options = new Map();
+  values.forEach((value) => {
+    const label = String(value || '').trim();
+    const key = label.toLowerCase();
+    if (key && !options.has(key)) options.set(key, { value: label, label });
+  });
+  return [...options.values()].sort((a, b) => a.label.localeCompare(b.label));
+};
 
 const Consumables = () => {
   const [masterConsumables, setMasterConsumables] = useState([]);
@@ -812,11 +823,19 @@ const Consumables = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [usageFilter, setUsageFilter] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [unitOptions, setUnitOptions] = useState([]);
+  const [siteOptions, setSiteOptions] = useState([]);
+  const [optionsError, setOptionsError] = useState('');
 
   // Add modal
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [addForm, setAddForm] = useState({
     name: '',
+    partNo: '',
+    unit: '',
+    quantity: '',
+    rate: '',
+    site: '',
     usageType: 'single use',
   });
   const [adding, setAdding] = useState(false);
@@ -842,13 +861,59 @@ const Consumables = () => {
     fetchData();
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    const loadOptions = async () => {
+      const [unitsResult, sitesResult] = await Promise.allSettled([
+        axios.get(`${API_BASE_URL}/material/uom`),
+        axios.get(`${API_BASE_URL}/reckoner/sites`),
+      ]);
+      if (!active) return;
+
+      const errors = [];
+      if (unitsResult.status === 'fulfilled') {
+        setUnitOptions(toSelectOptions((unitsResult.value.data?.data || []).map((unit) => unit.uom_name)));
+      } else {
+        console.error('Error fetching consumable units:', unitsResult.reason);
+        errors.push('Existing units could not be loaded');
+      }
+
+      if (sitesResult.status === 'fulfilled') {
+        setSiteOptions(toSelectOptions((sitesResult.value.data?.data || []).map((site) => site.site_name)));
+      } else {
+        console.error('Error fetching consumable sites:', sitesResult.reason);
+        errors.push('Existing sites could not be loaded');
+      }
+      setOptionsError(errors.length ? `${errors.join(' and ')}. You can still type new values.` : '');
+    };
+
+    loadOptions();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    setUnitOptions((previous) => toSelectOptions([
+      ...previous.map((option) => option.value),
+      ...masterConsumables.map((item) => item.unit),
+    ]));
+    setSiteOptions((previous) => toSelectOptions([
+      ...previous.map((option) => option.value),
+      ...masterConsumables.map((item) => item.site),
+    ]));
+  }, [masterConsumables]);
+
   // Filter logic (master only)
   useEffect(() => {
     let result = [...masterConsumables];
 
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
-      result = result.filter(item => item.name.toLowerCase().includes(term));
+      result = result.filter(item => [
+        item.name,
+        item.part_no,
+        item.unit,
+        item.site,
+      ].some(value => String(value || '').toLowerCase().includes(term)));
     }
 
     if (usageFilter !== 'all') {
@@ -859,7 +924,15 @@ const Consumables = () => {
   }, [searchTerm, usageFilter, masterConsumables]);
 
   const openAddModal = () => {
-    setAddForm({ name: '', usageType: 'single use' });
+    setAddForm({
+      name: '',
+      partNo: '',
+      unit: '',
+      quantity: '',
+      rate: '',
+      site: '',
+      usageType: 'single use',
+    });
     setIsAddModalOpen(true);
   };
 
@@ -867,8 +940,15 @@ const Consumables = () => {
 
   const handleAddSubmit = async (e) => {
     e.preventDefault();
-    if (!addForm.name.trim()) {
-      Swal.fire({ icon: 'warning', title: 'Required', text: 'Consumable name is required', timer: 2000, showConfirmButton: false });
+    if (!addForm.name.trim() || !addForm.partNo.trim() || !addForm.unit.trim() ||
+        !addForm.quantity.trim() || !addForm.rate.trim() || !addForm.site.trim()) {
+      Swal.fire({ icon: 'warning', title: 'Required', text: 'Complete all consumable details', timer: 2000, showConfirmButton: false });
+      return;
+    }
+
+    if (!/^\d+(?:\.\d{1,3})?$/.test(addForm.quantity) || Number(addForm.quantity) <= 0 ||
+        !/^\d+(?:\.\d{1,2})?$/.test(addForm.rate) || Number(addForm.rate) < 0) {
+      Swal.fire({ icon: 'warning', title: 'Invalid amount', text: 'Quantity must be positive (up to 3 decimals) and rate must be zero or more (up to 2 decimals)', timer: 2500, showConfirmButton: false });
       return;
     }
 
@@ -876,6 +956,11 @@ const Consumables = () => {
     try {
       const payload = {
         consumable_name: addForm.name.trim(),
+        part_no: addForm.partNo.trim(),
+        unit: addForm.unit.trim(),
+        quantity: addForm.quantity,
+        rate: addForm.rate,
+        site: addForm.site.trim(),
         is_multi_use: addForm.usageType === 'multi use' ? 1 : 0,
       };
 
@@ -1034,14 +1119,24 @@ const Consumables = () => {
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-emerald-50">
                     <tr>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-emerald-800 uppercase tracking-wider">Name</th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-emerald-800 uppercase tracking-wider w-48">Status</th>
+                      {['S.No', 'Part No', 'Item Description', 'Unit', 'Quantity', 'Rate', 'Value', 'Site', 'Usage Type'].map((heading) => (
+                        <th key={heading} className="px-6 py-4 text-left text-sm font-semibold text-emerald-800 uppercase tracking-wider whitespace-nowrap">
+                          {heading}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {filteredConsumables.map(item => (
+                    {filteredConsumables.map((item, index) => (
                       <tr key={item.id} className="hover:bg-emerald-50/40">
-                        <td className="px-6 py-4 text-gray-800 font-medium">{item.name}</td>
+                        <td className="px-6 py-4 text-gray-700">{index + 1}</td>
+                        <td className="px-6 py-4 text-gray-700">{item.part_no || 'N/A'}</td>
+                        <td className="px-6 py-4 text-gray-800 font-medium">{item.item_description || item.name}</td>
+                        <td className="px-6 py-4 text-gray-700">{item.unit || 'N/A'}</td>
+                        <td className="px-6 py-4 text-gray-700">{item.quantity ?? 'N/A'}</td>
+                        <td className="px-6 py-4 text-gray-700">{item.rate ?? 'N/A'}</td>
+                        <td className="px-6 py-4 text-gray-700">{item.value ?? 'N/A'}</td>
+                        <td className="px-6 py-4 text-gray-700">{item.site || 'N/A'}</td>
                         <td className="px-6 py-4">
                           <span className={`inline-flex px-4 py-1.5 text-sm font-medium rounded-full ${
                             item.consumableStatus === 'multi use' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-amber-100 text-amber-800 border border-amber-200'
@@ -1064,41 +1159,138 @@ const Consumables = () => {
         {/* Add Modal */}
         {isAddModalOpen && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={closeAddModal}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
               <div className="bg-gradient-to-r from-emerald-600 to-emerald-700 px-6 py-5 text-white rounded-t-2xl">
                 <h3 className="text-xl font-semibold">Add New Consumable</h3>
               </div>
 
-              <form onSubmit={handleAddSubmit} className="p-6 space-y-6">
-                <div>
+              <form onSubmit={handleAddSubmit} className="p-6 space-y-5">
+                {optionsError && (
+                  <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{optionsError}</p>
+                )}
+                <div className="grid gap-5 md:grid-cols-2">
+                  <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Consumable Name <span className="text-red-500">*</span>
+                    Part No <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
-                    value={addForm.name}
-                    onChange={e => setAddForm({ ...addForm, name: e.target.value })}
-                    placeholder="e.g. Safety Helmet - 5 nos"
+                    value={addForm.partNo}
+                    onChange={e => setAddForm({ ...addForm, partNo: e.target.value })}
+                    placeholder="Enter part number"
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                     required
                     disabled={adding}
                   />
                 </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Usage Type <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={addForm.usageType}
-                    onChange={e => setAddForm({ ...addForm, usageType: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 bg-white"
-                    required
-                    disabled={adding}
-                  >
-                    <option value="single use">Single use (disposable)</option>
-                    <option value="multi use">Multi use (reusable)</option>
-                  </select>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Item Description <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={addForm.name}
+                      onChange={e => setAddForm({ ...addForm, name: e.target.value })}
+                      placeholder="Describe the consumable"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                      required
+                      disabled={adding}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
+                      Unit <span className="text-red-500">*</span>
+                    </label>
+                    <CreatableSelect
+                      isClearable
+                      options={unitOptions}
+                      value={addForm.unit ? { value: addForm.unit, label: addForm.unit } : null}
+                      onChange={option => setAddForm({ ...addForm, unit: option?.value || '' })}
+                      onCreateOption={value => setAddForm({ ...addForm, unit: value.trim() })}
+                      placeholder="Select or type a unit..."
+                      formatCreateLabel={value => `Create unit "${value}"`}
+                      isDisabled={adding}
+                      className="text-sm"
+                      classNamePrefix="unit-select"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
+                      Quantity <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="0.001"
+                      step="0.001"
+                      value={addForm.quantity}
+                      onChange={e => setAddForm({ ...addForm, quantity: e.target.value })}
+                      placeholder="Enter quantity"
+                      className="w-full rounded-lg border border-gray-300 px-4 py-3 focus:ring-2 focus:ring-emerald-500"
+                      required
+                      disabled={adding}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
+                      Rate <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={addForm.rate}
+                      onChange={e => setAddForm({ ...addForm, rate: e.target.value })}
+                      placeholder="Enter rate"
+                      className="w-full rounded-lg border border-gray-300 px-4 py-3 focus:ring-2 focus:ring-emerald-500"
+                      required
+                      disabled={adding}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
+                      Value (Quantity × Rate)
+                    </label>
+                    <input
+                      type="text"
+                      value={addForm.quantity && addForm.rate && Number.isFinite(Number(addForm.quantity) * Number(addForm.rate))
+                        ? (Number(addForm.quantity) * Number(addForm.rate)).toFixed(2)
+                        : ''}
+                      readOnly
+                      className="w-full rounded-lg border border-gray-300 bg-gray-100 px-4 py-3 text-gray-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
+                      Site <span className="text-red-500">*</span>
+                    </label>
+                    <CreatableSelect
+                      isClearable
+                      options={siteOptions}
+                      value={addForm.site ? { value: addForm.site, label: addForm.site } : null}
+                      onChange={option => setAddForm({ ...addForm, site: option?.value || '' })}
+                      onCreateOption={value => setAddForm({ ...addForm, site: value.trim() })}
+                      placeholder="Select or type a site..."
+                      formatCreateLabel={value => `Create site "${value}"`}
+                      isDisabled={adding}
+                      className="text-sm"
+                      classNamePrefix="site-select"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Usage Type <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={addForm.usageType}
+                      onChange={e => setAddForm({ ...addForm, usageType: e.target.value })}
+                      className="w-full rounded-lg border border-gray-300 bg-white px-4 py-3 focus:ring-2 focus:ring-emerald-500"
+                      required
+                      disabled={adding}
+                    >
+                      <option value="single use">Single use (disposable)</option>
+                      <option value="multi use">Multi use (reusable)</option>
+                    </select>
+                  </div>
                 </div>
 
                 <div className="flex gap-4 pt-4">

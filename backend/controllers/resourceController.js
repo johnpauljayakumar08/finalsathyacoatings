@@ -28,6 +28,13 @@ exports.getAllConsumables = async (req, res) => {
       SELECT 
         id,
         consumable_name AS name,
+        consumable_name AS item_description,
+        part_no,
+        unit,
+        quantity,
+        rate,
+        \`value\`,
+        site,
         is_multi_use,
         created_at AS createdAt
       FROM resource_consumables
@@ -37,6 +44,13 @@ exports.getAllConsumables = async (req, res) => {
     const data = rows.map(row => ({
       id: row.id,
       name: row.name,
+      item_description: row.item_description,
+      part_no: row.part_no,
+      unit: row.unit,
+      quantity: row.quantity,
+      rate: row.rate,
+      value: row.value,
+      site: row.site,
       isMultiUse: row.is_multi_use === 1,
       consumableStatus: row.is_multi_use === 1 ? 'multi use' : 'single use',
       createdAt: row.createdAt
@@ -62,12 +76,42 @@ exports.getAllConsumables = async (req, res) => {
 // controllers/resourceController.js (or supplyController.js)
 exports.createConsumable = async (req, res) => {
   try {
-    const { consumable_name, is_multi_use } = req.body;
+    const {
+      consumable_name, part_no, unit, quantity, rate, site, is_multi_use,
+    } = req.body;
 
     if (!consumable_name || typeof consumable_name !== 'string' || consumable_name.trim() === '') {
       return res.status(400).json({
         status: 'error',
-        message: 'Valid consumable_name is required'
+        message: 'Item description is required'
+      });
+    }
+    if (typeof part_no !== 'string' || !part_no.trim() ||
+        typeof unit !== 'string' || !unit.trim() ||
+        typeof site !== 'string' || !site.trim()) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Part number, unit, and site are required'
+      });
+    }
+
+    const quantityText = String(quantity ?? '').trim();
+    const rateText = String(rate ?? '').trim();
+    if (!/^\d+(?:\.\d{1,3})?$/.test(quantityText) ||
+        !/^\d+(?:\.\d{1,2})?$/.test(rateText)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Quantity must be positive (up to 3 decimal places) and rate must be non-negative (up to 2 decimal places)'
+      });
+    }
+    const numericQuantity = Number(quantityText);
+    const numericRate = Number(rateText);
+    if (!Number.isFinite(numericQuantity) || numericQuantity <= 0 ||
+        !Number.isFinite(numericRate) || numericRate < 0 ||
+        numericQuantity * numericRate > 9999999999999.99) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Quantity and rate are outside the supported range'
       });
     }
 
@@ -78,9 +122,18 @@ exports.createConsumable = async (req, res) => {
 
     const [result] = await db.query(
       `INSERT INTO resource_consumables 
-       (consumable_name, is_multi_use, created_at) 
-       VALUES (?, ?, NOW())`,
-      [consumable_name.trim(), multiUse]
+       (consumable_name, part_no, unit, quantity, rate, \`value\`, site, is_multi_use, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [
+        consumable_name.trim(),
+        part_no.trim(),
+        unit.trim(),
+        numericQuantity,
+        numericRate,
+        Number((numericQuantity * numericRate).toFixed(2)),
+        site.trim(),
+        multiUse,
+      ]
     );
 
     const insertId = result.insertId;
@@ -89,6 +142,13 @@ exports.createConsumable = async (req, res) => {
       `SELECT 
          id,
          consumable_name AS name,
+         consumable_name AS item_description,
+         part_no,
+         unit,
+         quantity,
+         rate,
+         \`value\`,
+         site,
          is_multi_use,
          created_at AS createdAt
        FROM resource_consumables 
@@ -101,6 +161,13 @@ exports.createConsumable = async (req, res) => {
     const responseItem = {
       id: item.id,
       name: item.name,
+      item_description: item.item_description,
+      part_no: item.part_no,
+      unit: item.unit,
+      quantity: item.quantity,
+      rate: item.rate,
+      value: item.value,
+      site: item.site,
       isMultiUse: item.is_multi_use === 1,
       consumableStatus: item.is_multi_use === 1 ? 'multi use' : 'single use',
       createdAt: item.createdAt
