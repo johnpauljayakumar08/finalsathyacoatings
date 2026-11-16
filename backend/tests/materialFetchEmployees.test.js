@@ -45,6 +45,8 @@ test('resource personnel fetch includes employees and labor and applies paramete
   assert.equal(calls.length, 2);
   assert.match(calls[0].query, /FROM employee_master em/);
   assert.match(calls[1].query, /FROM labour l/);
+  assert.match(calls[0].query, /em\.bank_account_number/);
+  assert.match(calls[1].query, /l\.team_name/);
   assert.ok(calls.every(({ query }) => !query.includes('UNION')));
   const expectedParams = [
     'Site Engineer',

@@ -1234,22 +1234,23 @@ exports.addLabour = async (req, res) => {
     full_name, date_of_birth, date_of_joining, mobile, company_email,
     current_address, permanent_address, gender_id, emp_type_id, designation_id,
     status_id, esic_number, pf_number, aadhaar_number,
-    approved_salary, created_by
+    approved_salary, created_by, team_name, father_guardian_name,
+    father_guardian_mobile
   } = req.body;
   const company = "Sathya Coatings";
 
-  // Validate required fields
   if (!full_name || !date_of_birth || !date_of_joining || !mobile ||
       !company_email || !current_address || !permanent_address || !gender_id ||
       !emp_type_id || !designation_id || !status_id ||
-      !aadhaar_number || !approved_salary || !created_by) {
+      !approved_salary || !created_by || !team_name ||
+      !father_guardian_name || !father_guardian_mobile) {
     return res.status(400).json({
       success: false,
-      message: "Missing required fields"
+      message: "Required labor fields, including team and father/guardian details, must be provided",
     });
   }
 
-  if (!/^\d{12}$/.test(String(aadhaar_number))) {
+  if (aadhaar_number && !/^\d{12}$/.test(String(aadhaar_number))) {
     return res.status(400).json({
       success: false,
       message: "Aadhaar number must contain exactly 12 digits"
@@ -1260,7 +1261,7 @@ exports.addLabour = async (req, res) => {
   if (!Number.isFinite(salaryValue) || salaryValue <= 0 || !/^\d+(\.\d{1,2})?$/.test(String(approved_salary))) {
     return res.status(400).json({
       success: false,
-      message: "Approved salary per shift must be a positive number with up to 2 decimal places"
+      message: "Salary per day must be a positive number with up to 2 decimal places"
     });
   }
 
@@ -1281,6 +1282,13 @@ exports.addLabour = async (req, res) => {
     });
   }
 
+  if (!mobileRegex.test(father_guardian_mobile)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid father/guardian mobile number: must be 10 digits, with optional +91 prefix",
+    });
+  }
+
   const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
   if (!emailRegex.test(company_email)) {
     return res.status(400).json({
@@ -1297,32 +1305,40 @@ exports.addLabour = async (req, res) => {
     });
   }
 
-  // Verify if created_by exists in the users table
-  const [userExists] = await db.query('SELECT user_id FROM users WHERE user_id = ?', [created_by]);
-  if (!userExists.length) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid Created By: User does not exist",
-    });
-  }
-
-  // Validate foreign keys (add similar checks as in addEmployee if needed)
-  // Assuming similar foreign key validations for gender_id, dept_id, etc.
-
   try {
+    const [userExists] = await db.query('SELECT user_id FROM users WHERE user_id = ?', [created_by]);
+    if (!userExists.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Created By: User does not exist",
+      });
+    }
+
+    const [employmentType] = await db.query(
+      'SELECT id, type FROM employment_type WHERE id = ?',
+      [emp_type_id]
+    );
+    if (!employmentType.length || String(employmentType[0].type).toLowerCase() !== "labor") {
+      return res.status(400).json({
+        success: false,
+        message: "Employee Type must be Labor",
+      });
+    }
+
     // Insert into labour table
     const [result] = await db.query(
       `INSERT INTO labour (
         full_name, date_of_birth, date_of_joining, company, branch, mobile, company_email,
         current_address, permanent_address, gender_id, dept_id, emp_type_id, designation_id,
         status_id, esic_number, pf_number, contractor_id, approved_salary, created_by, created_at,
-        site_engineer_emp_id, aadhaar_number
-      ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, NOW(), ?, ?)`,
+        site_engineer_emp_id, aadhaar_number, team_name, father_guardian_name, father_guardian_mobile
+      ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, NOW(), ?, ?, ?, ?, ?)`,
       [
         full_name, date_of_birth, date_of_joining, company, mobile, company_email,
         current_address, permanent_address, gender_id, emp_type_id, designation_id,
         status_id, esic_number || null, pf_number || null, salaryValue, created_by,
-        null, aadhaar_number
+        null, aadhaar_number || null, team_name.trim(), father_guardian_name.trim(),
+        father_guardian_mobile
       ]
     );
 
@@ -1331,12 +1347,12 @@ exports.addLabour = async (req, res) => {
       message: "Labour added successfully",
       data: {
         id: result.insertId,
-        ...req.body,
+        full_name,
         company,
         branch: null,
         dept_id: null,
         contractor_id: null,
-        approved_salary: salaryValue
+        approved_salary: salaryValue,
       }
     });
   } catch (error) {

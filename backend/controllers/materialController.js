@@ -296,8 +296,14 @@ exports.fetchEmployees = async (req, res) => {
           em.company_email,
           em.current_address,
           em.permanent_address,
+          em.aadhaar_number,
           em.esic_number,
           em.pf_number,
+          em.bank_account_number,
+          em.bank_account_holder_name,
+          em.bank_name,
+          em.bank_ifsc_code,
+          em.bank_branch,
           em.created_at,
           em.approved_salary,
           u.user_name AS login_user_name,
@@ -334,8 +340,17 @@ exports.fetchEmployees = async (req, res) => {
           l.company_email,
           l.current_address,
           l.permanent_address,
+          l.aadhaar_number,
           l.esic_number,
           l.pf_number,
+          l.team_name,
+          l.father_guardian_name,
+          l.father_guardian_mobile,
+          NULL AS bank_account_number,
+          NULL AS bank_account_holder_name,
+          NULL AS bank_name,
+          NULL AS bank_ifsc_code,
+          NULL AS bank_branch,
           l.created_at,
           l.approved_salary,
           NULL AS login_user_name,
@@ -534,7 +549,9 @@ exports.addEmployee = async (req, res) => {
       emp_id, full_name, gender_id, date_of_birth, date_of_joining, status_id,
       dept_id, emp_type_id, designation_id,
       mobile, company_email, current_address, permanent_address,
-      user_password, esic_number, pf_number, approved_salary, created_by
+      user_password, esic_number, pf_number, approved_salary, created_by,
+      aadhaar_number, bank_account_number, bank_account_holder_name,
+      bank_name, bank_ifsc_code, bank_branch
     } = req.body;
     const company = 'Sathya Coatings';
     const branch = '';
@@ -545,11 +562,41 @@ exports.addEmployee = async (req, res) => {
       !emp_id || !full_name || !gender_id || !date_of_birth || !date_of_joining ||
       !status_id || !company || !dept_id || !emp_type_id || !designation_id ||
       !mobile || !loginEmail || !current_address || !permanent_address ||
-      !approved_salary || !created_by || !user_password
+      !approved_salary || !created_by || !user_password || !aadhaar_number ||
+      !esic_number || !pf_number || !bank_account_number ||
+      !bank_account_holder_name || !bank_name || !bank_ifsc_code || !bank_branch
     ) {
       return res.status(400).json({
         status: 'error',
-        message: 'All required fields (except ESIC and PF numbers) must be provided',
+        message: 'All required employee and bank fields must be provided',
+      });
+    }
+
+    if (!/^\d{12}$/.test(String(aadhaar_number))) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Aadhaar number must contain exactly 12 digits',
+      });
+    }
+
+    if (!/^\d{17}$/.test(String(esic_number))) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ESIC number must contain exactly 17 digits',
+      });
+    }
+
+    if (!/^[A-Za-z0-9-]{6,34}$/.test(String(bank_account_number))) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Bank account number must contain 6 to 34 letters, digits, or hyphens',
+      });
+    }
+
+    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/i.test(String(bank_ifsc_code))) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Invalid IFSC code',
       });
     }
 
@@ -649,11 +696,17 @@ exports.addEmployee = async (req, res) => {
       });
     }
 
-    const [empType] = await db.query('SELECT id FROM employment_type WHERE id = ?', [emp_type_id]);
+    const [empType] = await db.query('SELECT id, type FROM employment_type WHERE id = ?', [emp_type_id]);
     if (empType.length === 0) {
       return res.status(400).json({
         status: 'error',
         message: 'Invalid emp_type_id: employment type does not exist',
+      });
+    }
+    if (!['engineer', 'office staff', 'factory staff'].includes(String(empType[0].type).toLowerCase())) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Employee Type must be Engineer, Office Staff, or Factory Staff',
       });
     }
 
@@ -707,13 +760,16 @@ exports.addEmployee = async (req, res) => {
           emp_id, full_name, gender_id, date_of_birth, date_of_joining, status_id,
           company, dept_id, emp_type_id, designation_id, branch,
           mobile, company_email, current_address, permanent_address,
-          esic_number, pf_number, approved_salary, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          esic_number, pf_number, approved_salary, created_by, aadhaar_number,
+          bank_account_number, bank_account_holder_name, bank_name, bank_ifsc_code, bank_branch
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
         [
           emp_id, full_name, gender_id, date_of_birth, date_of_joining, status_id,
           company, dept_id, emp_type_id, designation_id, branch,
           mobile, loginEmail, current_address, permanent_address,
-          esic_number || null, pf_number || null, parseFloat(approved_salary), created_by
+          esic_number, pf_number, parseFloat(approved_salary), created_by,
+          aadhaar_number, bank_account_number, bank_account_holder_name,
+          bank_name, bank_ifsc_code.toUpperCase(), bank_branch
         ]
       );
 

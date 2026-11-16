@@ -3,9 +3,8 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import Swal from "sweetalert2";
 import { useParams } from "react-router-dom";
-import { Loader2, Filter, PlusCircle, X, ChevronDown, Pencil, LockKeyhole, Download, Upload } from "lucide-react";
+import { Loader2, Filter, PlusCircle, X, Pencil, LockKeyhole, Download, Upload } from "lucide-react";
 import AddEmployee from "../../components/AddEmployee";
-import AddTemporaryEmployee from "../../components/AddTemporaryEmployee";
 
 const LABOUR_IMPORT_COLUMNS = [
   { header: "Full Name", key: "full_name" },
@@ -20,7 +19,7 @@ const LABOUR_IMPORT_COLUMNS = [
   { header: "Designation", key: "designation" },
   { header: "Status", key: "status" },
   { header: "Aadhaar Number", key: "aadhaar_number" },
-  { header: "Approved Salary Per Shift", key: "approved_salary" },
+  { header: "Approved Salary Per Day", key: "approved_salary" },
   { header: "ESIC Number (Optional)", key: "esic_number" },
   { header: "PF Number (Optional)", key: "pf_number" },
 ];
@@ -54,13 +53,11 @@ const EmployeeDetails = () => {
   const [error, setError] = useState(null);
   const [showFilter, setShowFilter] = useState(false);
   const [showAddEmployeeModal, setShowAddEmployeeModal] = useState(false);
-  const [showAddTemporaryEmployeeModal, setShowAddTemporaryEmployeeModal] = useState(false);
   const [editingLoginEmployee, setEditingLoginEmployee] = useState(null);
-  const [activePersonnelTab, setActivePersonnelTab] = useState("Site Incharge");
+  const [activePersonnelTab, setActivePersonnelTab] = useState("Employees");
   const [loginForm, setLoginForm] = useState({ user_password: "" });
   const [isUpdatingLogin, setIsUpdatingLogin] = useState(false);
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
-  const [showEmployeeTypeMenu, setShowEmployeeTypeMenu] = useState(false);
   const [filters, setFilters] = useState({
     designation: "",
     status: "",
@@ -72,7 +69,6 @@ const EmployeeDetails = () => {
     statuses: [],
     companies: [],
   });
-  const menuRef = useRef(null);
   const labourFileInputRef = useRef(null);
   const employeeFetchControllerRef = useRef(null);
 
@@ -102,7 +98,7 @@ const EmployeeDetails = () => {
         "Example current address",
         "Example permanent address",
         "Male",
-        "Contract",
+        "Labor",
         "Labour",
         "Active",
         "123456789012",
@@ -433,19 +429,6 @@ const EmployeeDetails = () => {
     return () => employeeFetchControllerRef.current?.abort();
   }, [fetchEmployees]);
 
-  // Handle clicks outside the employee type menu to close it
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (menuRef.current && !menuRef.current.contains(event.target)) {
-        setShowEmployeeTypeMenu(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
-
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
     setFilters((prev) => ({ ...prev, [name]: value }));
@@ -456,26 +439,26 @@ const EmployeeDetails = () => {
     setShowFilter(false);
   };
 
-  const siteIncharges = employees.filter((person) => person.personnel_type === "Site Incharge");
+  const nonLaborEmployees = employees.filter((person) => person.personnel_type !== "Labor");
   const labours = employees.filter((person) => person.personnel_type === "Labor");
-  const visiblePersonnel = activePersonnelTab === "Site Incharge" ? siteIncharges : labours;
+  const visiblePersonnel = activePersonnelTab === "Employees" ? nonLaborEmployees : labours;
 
-  // Handle saving new employee (for both fixed and temporary)
-  const handleSaveEmployee = async (newEmployeeData, designation) => {
+  // Refresh personnel data after either add flow completes.
+  const handleSaveEmployee = async (newEmployeeData) => {
     try {
       setIsAddingEmployee(true);
-      console.log("Received employee data:", { ...newEmployeeData, designation });
 
       // Refresh the employee list and filter options
       await fetchEmployees();
       await fetchFilterOptions();
+      setActivePersonnelTab(newEmployeeData.id ? "Labor" : "Employees");
 
       Swal.fire({
         position: "top-end",
         icon: "success",
-        title: newEmployeeData.aadhaar_number || newEmployeeData.contractor_id
+        title: newEmployeeData.id
           ? "Labor Added Successfully!"
-          : "Fixed Employee Added Successfully!",
+          : "Employee Added Successfully!",
         showConfirmButton: false,
         timer: 2000,
         toast: true,
@@ -484,7 +467,6 @@ const EmployeeDetails = () => {
       });
 
       setShowAddEmployeeModal(false);
-      setShowAddTemporaryEmployeeModal(false);
     } catch (error) {
       console.error("Error in handleSaveEmployee:", error);
       Swal.fire({
@@ -559,8 +541,6 @@ const EmployeeDetails = () => {
   // Handle closing the modals
   const handleCloseModal = () => {
     setShowAddEmployeeModal(false);
-    setShowAddTemporaryEmployeeModal(false);
-    setShowEmployeeTypeMenu(false);
   };
 
   // Handle clicking outside the modal
@@ -568,16 +548,6 @@ const EmployeeDetails = () => {
     if (e.target === e.currentTarget) {
       handleCloseModal();
     }
-  };
-
-  // Handle employee type selection
-  const handleEmployeeTypeSelect = (type) => {
-    if (type === "fixed") {
-      setShowAddEmployeeModal(true);
-    } else if (type === "temporary") {
-      setShowAddTemporaryEmployeeModal(true);
-    }
-    setShowEmployeeTypeMenu(false);
   };
 
   return (
@@ -627,34 +597,15 @@ const EmployeeDetails = () => {
                 : <Upload className="h-4 w-4 mr-2" />}
               {isUploadingLabours ? "Uploading..." : "Upload Employee/Labor Excel"}
             </button>
-            <div className="relative" ref={menuRef}>
+            <div>
               <button
-                onClick={() => setShowEmployeeTypeMenu(!showEmployeeTypeMenu)}
+                onClick={() => setShowAddEmployeeModal(true)}
                 className="inline-flex items-center px-3 py-1.5 sm:px-4 sm:py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                 title="Add New Employee"
               >
                 <PlusCircle className="h-4 w-4 sm:h-5 sm:w-5 mr-1 sm:mr-2" />
                 Add Employee
-                <ChevronDown className="h-4 w-4 sm:h-5 sm:w-5 ml-2" />
               </button>
-              {showEmployeeTypeMenu && (
-                <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10">
-                  <div className="py-1">
-                    <button
-                      onClick={() => handleEmployeeTypeSelect("fixed")}
-                      className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-indigo-50 hover:text-indigo-900"
-                    >
-                      Fixed Employees
-                    </button>
-                    <button
-                      onClick={() => handleEmployeeTypeSelect("temporary")}
-                      className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-indigo-50 hover:text-indigo-900"
-                    >
-                      Temporary Employees
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -742,7 +693,7 @@ const EmployeeDetails = () => {
 
         <div className="mb-4 flex flex-wrap gap-2" role="tablist" aria-label="Personnel tables">
           {[
-            { label: "Site Incharge", count: siteIncharges.length },
+            { label: "Employees", count: nonLaborEmployees.length },
             { label: "Labor", count: labours.length },
           ].map(({ label, count }) => (
             <button
@@ -786,11 +737,12 @@ const EmployeeDetails = () => {
                 <thead className="bg-gray-50">
                   <tr>
                     {[
-                      "S.No", "Record Type", "Employee / Labor ID", "Full Name", "Gender",
-                      "Date of Birth", "Date of Joining", "Company", "Department",
-                      "Employment Type", "Designation", "Branch", "Status", "Approved Salary",
-                      "Mobile", "Email", "ESIC Number", "PF Number", "Current Address",
-                      "Permanent Address", "Login",
+                      "S.No", "Record Type", "Employee / Labor ID", "Full Name", "Employee Type",
+                      "Gender", "Date of Birth", "Date of Joining", "Company", "Department",
+                      "Designation", "Team Name", "Father/Guardian Name", "Guardian Mobile",
+                      "Branch", "Status", "Salary", "Aadhaar Number", "Mobile", "Email",
+                      "ESIC Number", "PF Number", "Current Address", "Permanent Address",
+                      "Bank Account Number", "Account Holder", "Bank Name", "IFSC Code", "Bank Branch", "Login",
                     ].map((heading) => (
                       <th
                         key={heading}
@@ -811,22 +763,33 @@ const EmployeeDetails = () => {
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.personnel_type)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.emp_id)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{formatValue(employee.full_name)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.employment_type)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.gender)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatDate(employee.date_of_birth)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatDate(employee.date_of_joining)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.company)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.department)}</td>
-                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.employment_type)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.designation)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.team_name)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.father_guardian_name)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.father_guardian_mobile)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.branch)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.status)}</td>
-                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.approved_salary)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                        {formatValue(employee.approved_salary)} / {employee.personnel_type === "Labor" ? "day" : "month"}
+                      </td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.aadhaar_number)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.mobile)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.company_email)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.esic_number)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.pf_number)}</td>
                       <td className="px-4 sm:px-6 py-4 min-w-56 text-sm text-gray-700">{formatValue(employee.current_address)}</td>
                       <td className="px-4 sm:px-6 py-4 min-w-56 text-sm text-gray-700">{formatValue(employee.permanent_address)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.bank_account_number)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.bank_account_holder_name)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.bank_name)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.bank_ifsc_code)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.bank_branch)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">
                         {employee.personnel_type === "Labor" ? (
                           "No login account"
@@ -854,7 +817,6 @@ const EmployeeDetails = () => {
           </div>
         )}
 
-        {/* Add Fixed Employee Modal */}
         {showAddEmployeeModal && (
           <div
             className="fixed inset-0 bg-opacity-50 flex items-center justify-center z-50 transition-opacity duration-300"
@@ -863,23 +825,6 @@ const EmployeeDetails = () => {
             <div className="bg-white rounded-xl shadow-lg max-w-4xl w-full transform transition-all duration-300">
               <AddEmployee
                 isOpen={showAddEmployeeModal}
-                onClose={handleCloseModal}
-                onSave={handleSaveEmployee}
-                isAddingEmployee={isAddingEmployee}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Add Temporary Employee Modal */}
-        {showAddTemporaryEmployeeModal && (
-          <div
-            className="fixed inset-0 bg-opacity-50 flex items-center justify-center z-50 transition-opacity duration-300"
-            onClick={handleOutsideClick}
-          >
-            <div className="bg-white rounded-xl shadow-lg max-w-4xl w-full transform transition-all duration-300">
-              <AddTemporaryEmployee
-                isOpen={showAddTemporaryEmployeeModal}
                 onClose={handleCloseModal}
                 onSave={handleSaveEmployee}
                 isAddingEmployee={isAddingEmployee}
