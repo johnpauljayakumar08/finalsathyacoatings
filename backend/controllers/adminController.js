@@ -1377,6 +1377,106 @@ exports.addLabour = async (req, res) => {
   }
 };
 
+exports.updateLabour = async (req, res) => {
+  const labourId = Number(req.params.id);
+  const {
+    full_name, date_of_birth, date_of_joining, mobile, company_email,
+    current_address, permanent_address, gender_id, emp_type_id, designation_id,
+    status_id, esic_number, pf_number, aadhaar_number, approved_salary,
+    team_name, father_guardian_name, father_guardian_mobile,
+  } = req.body;
+  const salaryValue = Number(approved_salary);
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  const mobileRegex = /^(?:\+91)?\d{10}$/;
+  const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  const clean = (value) => String(value ?? '').trim();
+
+  if (!Number.isInteger(labourId) || labourId <= 0 ||
+      !clean(full_name) || !dateRegex.test(date_of_birth || '') ||
+      !dateRegex.test(date_of_joining || '') || !mobileRegex.test(mobile || '') ||
+      !emailRegex.test(clean(company_email)) || !clean(current_address) ||
+      !clean(permanent_address) || !gender_id || !emp_type_id || !designation_id ||
+      !status_id || !clean(team_name) || !clean(father_guardian_name) ||
+      !mobileRegex.test(father_guardian_mobile || '') ||
+      !Number.isFinite(salaryValue) || salaryValue <= 0 ||
+      !/^\d+(\.\d{1,2})?$/.test(String(approved_salary))) {
+    return res.status(400).json({
+      success: false,
+      message: 'Required labor fields, including team and guardian details, must be valid',
+    });
+  }
+  if (aadhaar_number && !/^\d{12}$/.test(clean(aadhaar_number))) {
+    return res.status(400).json({ success: false, message: 'Aadhaar number must contain exactly 12 digits' });
+  }
+  if (esic_number && !/^\d{17}$/.test(clean(esic_number))) {
+    return res.status(400).json({ success: false, message: 'ESIC number must contain 17 digits' });
+  }
+
+  try {
+    const [rows] = await db.query(
+      'SELECT id FROM labour WHERE id = ?',
+      [labourId]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Labor record not found' });
+    }
+
+    const [employmentTypes] = await db.query(
+      'SELECT type FROM employment_type WHERE id = ?',
+      [emp_type_id]
+    );
+    if (!employmentTypes.length || String(employmentTypes[0].type).toLowerCase() !== 'labor') {
+      return res.status(400).json({ success: false, message: 'Employee Type must be Labor' });
+    }
+
+    const [labourDuplicates] = await db.query(
+      'SELECT id FROM labour WHERE company_email = ? AND id <> ?',
+      [clean(company_email), labourId]
+    );
+    const [employeeDuplicates] = await db.query(
+      'SELECT emp_id FROM employee_master WHERE company_email = ?',
+      [clean(company_email)]
+    );
+    if (labourDuplicates.length || employeeDuplicates.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Another personnel record already uses this email address',
+      });
+    }
+
+    await db.query(
+      `UPDATE labour
+       SET full_name = ?, date_of_birth = ?, date_of_joining = ?, mobile = ?,
+           company_email = ?, current_address = ?, permanent_address = ?,
+           gender_id = ?, emp_type_id = ?, designation_id = ?, status_id = ?,
+           esic_number = ?, pf_number = ?, aadhaar_number = ?, approved_salary = ?,
+           team_name = ?, father_guardian_name = ?, father_guardian_mobile = ?
+       WHERE id = ?`,
+      [
+        clean(full_name), date_of_birth, date_of_joining, mobile,
+        clean(company_email), clean(current_address), clean(permanent_address),
+        gender_id, emp_type_id, designation_id, status_id, clean(esic_number) || null,
+        clean(pf_number) || null, clean(aadhaar_number) || null, salaryValue, clean(team_name),
+        clean(father_guardian_name), father_guardian_mobile, labourId,
+      ]
+    );
+    return res.status(200).json({
+      success: true,
+      message: 'Labor details updated successfully',
+      data: { id: labourId, full_name: clean(full_name) },
+    });
+  } catch (error) {
+    console.error('Error updating labor details:', error);
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({
+        success: false,
+        message: 'A labor record already uses this email address',
+      });
+    }
+    return res.status(500).json({ success: false, message: 'Failed to update labor details' });
+  }
+};
+
 exports.importLabours = async (req, res) => {
   const { labours, created_by } = req.body;
   const company = "Sathya Coatings";

@@ -57,6 +57,7 @@ router.get('/site-engineers', adminController.getSiteEngineers);
 
 // Route to add labour
 router.post('/add-labour', adminController.addLabour);
+router.put('/labour/:id', adminController.updateLabour);
 router.post('/import-labours', adminController.importLabours);
 router.post('/import-employees', adminController.importEmployees);
 

@@ -53,6 +53,7 @@ const EmployeeDetails = () => {
   const [error, setError] = useState(null);
   const [showFilter, setShowFilter] = useState(false);
   const [showAddEmployeeModal, setShowAddEmployeeModal] = useState(false);
+  const [editingPersonnel, setEditingPersonnel] = useState(null);
   const [editingLoginEmployee, setEditingLoginEmployee] = useState(null);
   const [activePersonnelTab, setActivePersonnelTab] = useState("Employees");
   const [loginForm, setLoginForm] = useState({ user_password: "" });
@@ -443,22 +444,23 @@ const EmployeeDetails = () => {
   const labours = employees.filter((person) => person.personnel_type === "Labor");
   const visiblePersonnel = activePersonnelTab === "Employees" ? nonLaborEmployees : labours;
 
-  // Refresh personnel data after either add flow completes.
+  // Refresh personnel data after personnel records are created or edited.
   const handleSaveEmployee = async (newEmployeeData) => {
+    const wasEditing = Boolean(editingPersonnel);
+    const personnelType = newEmployeeData.personnel_type || (newEmployeeData.id ? "Labor" : "Employee");
     try {
       setIsAddingEmployee(true);
 
-      // Refresh the employee list and filter options
       await fetchEmployees();
       await fetchFilterOptions();
-      setActivePersonnelTab(newEmployeeData.id ? "Labor" : "Employees");
+      setActivePersonnelTab(personnelType === "Labor" ? "Labor" : "Employees");
 
       Swal.fire({
         position: "top-end",
         icon: "success",
-        title: newEmployeeData.id
-          ? "Labor Added Successfully!"
-          : "Employee Added Successfully!",
+        title: wasEditing
+          ? `${personnelType === "Labor" ? "Labor" : "Employee"} Details Updated`
+          : `${personnelType === "Labor" ? "Labor" : "Employee"} Added Successfully!`,
         showConfirmButton: false,
         timer: 2000,
         toast: true,
@@ -467,6 +469,7 @@ const EmployeeDetails = () => {
       });
 
       setShowAddEmployeeModal(false);
+      setEditingPersonnel(null);
     } catch (error) {
       console.error("Error in handleSaveEmployee:", error);
       Swal.fire({
@@ -538,9 +541,9 @@ const EmployeeDetails = () => {
     }
   };
 
-  // Handle closing the modals
   const handleCloseModal = () => {
     setShowAddEmployeeModal(false);
+    setEditingPersonnel(null);
   };
 
   // Handle clicking outside the modal
@@ -742,7 +745,7 @@ const EmployeeDetails = () => {
                       "Designation", "Team Name", "Father/Guardian Name", "Guardian Mobile",
                       "Branch", "Status", "Salary", "Aadhaar Number", "Mobile", "Email",
                       "ESIC Number", "PF Number", "Current Address", "Permanent Address",
-                      "Bank Account Number", "Account Holder", "Bank Name", "IFSC Code", "Bank Branch", "Login",
+                      "Bank Account Number", "Account Holder", "Bank Name", "IFSC Code", "Bank Branch", "Actions",
                     ].map((heading) => (
                       <th
                         key={heading}
@@ -791,23 +794,34 @@ const EmployeeDetails = () => {
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.bank_ifsc_code)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.bank_branch)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                        {employee.personnel_type === "Labor" ? (
-                          "No login account"
-                        ) : (
-                          <div className="space-y-2">
-                            <p className="text-xs text-gray-600">
-                              {employee.login_user_id ? `Username: ${employee.login_user_name}` : "No login account"}
-                            </p>
-                            <button
-                              type="button"
-                              onClick={() => openLoginEditor(employee)}
-                              className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                              {employee.login_user_id ? "Edit Login" : "Set Login"}
-                            </button>
-                          </div>
-                        )}
+                        <div className="space-y-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingPersonnel(employee);
+                              setShowAddEmployeeModal(true);
+                            }}
+                            className="inline-flex items-center gap-1 rounded-md bg-teal-600 px-3 py-2 text-xs font-medium text-white hover:bg-teal-700"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            Edit Details
+                          </button>
+                          {employee.personnel_type !== "Labor" && (
+                            <>
+                              <p className="text-xs text-gray-600">
+                                {employee.login_user_id ? `Username: ${employee.login_user_name}` : "No login account"}
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => openLoginEditor(employee)}
+                                className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                                {employee.login_user_id ? "Edit Login" : "Set Login"}
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -828,6 +842,7 @@ const EmployeeDetails = () => {
                 onClose={handleCloseModal}
                 onSave={handleSaveEmployee}
                 isAddingEmployee={isAddingEmployee}
+                initialEmployee={editingPersonnel}
               />
             </div>
           </div>

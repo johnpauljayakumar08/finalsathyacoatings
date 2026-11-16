@@ -37,7 +37,14 @@ const initialFormData = {
   bank_branch: "",
 };
 
-const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase = true }) => {
+const AddEmployee = ({
+  isOpen,
+  onClose,
+  onSave,
+  isAddingEmployee,
+  saveToDatabase = true,
+  initialEmployee = null,
+}) => {
   const { encodedUserId } = useParams();
   const [userId, setUserId] = useState(null);
   const [formData, setFormData] = useState(initialFormData);
@@ -55,6 +62,30 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
     designations: false,
     statuses: false,
   });
+
+  const isEditing = Boolean(initialEmployee);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!initialEmployee) {
+      setFormData(initialFormData);
+    } else {
+      const personnelFormData = Object.keys(initialFormData).reduce((values, fieldName) => ({
+        ...values,
+        [fieldName]: initialEmployee[fieldName] == null ? "" : String(initialEmployee[fieldName]),
+      }), initialFormData);
+      setFormData({
+        ...personnelFormData,
+        emp_id: initialEmployee.emp_id || "",
+        company: initialEmployee.company || COMPANY_NAME,
+        date_of_birth: String(initialEmployee.date_of_birth || "").slice(0, 10),
+        date_of_joining: String(initialEmployee.date_of_joining || "").slice(0, 10),
+        approved_salary: initialEmployee.approved_salary == null ? "" : String(initialEmployee.approved_salary),
+        user_password: "",
+      });
+    }
+    setErrors({});
+  }, [isOpen, initialEmployee]);
 
   const selectedEmploymentType = useMemo(
     () => employmentTypes.find((type) => String(type.id) === String(formData.emp_type_id)),
@@ -148,10 +179,10 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
     else if (!mobileRegex.test(formData.mobile)) newErrors.mobile = "Invalid mobile: 10 digits, optional +91";
     if (!formData.company_email) newErrors.company_email = "Company Email is required";
     else if (!emailRegex.test(formData.company_email)) newErrors.company_email = "Invalid email format";
-    if (!isLabor && saveToDatabase && formData.user_password.length < 8) {
+    if (!isEditing && !isLabor && saveToDatabase && formData.user_password.length < 8) {
       newErrors.user_password = "Password must be at least 8 characters";
     }
-    if (!isLabor && saveToDatabase && new TextEncoder().encode(formData.user_password).length > 72) {
+    if (!isEditing && !isLabor && saveToDatabase && new TextEncoder().encode(formData.user_password).length > 72) {
       newErrors.user_password = "Password cannot exceed 72 bytes";
     }
     if (!formData.current_address.trim()) newErrors.current_address = "Current Address is required";
@@ -209,21 +240,38 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
     try {
       setLoading((previous) => ({ ...previous, form: true }));
       setErrors({});
-      const employeeData = { ...formData, company: COMPANY_NAME, branch: "", created_by: userId };
+      const employeeData = {
+        ...formData,
+        company: COMPANY_NAME,
+        branch: "",
+        ...(isEditing ? {} : { created_by: userId }),
+      };
       let savedEmployeeData = employeeData;
       const designation = designations.find((item) => String(item.id) === String(formData.designation_id))?.designation || "";
 
       if (saveToDatabase) {
-        const endpoint = isLabor ? "/admin/add-labour" : "/material/add-employee";
-        const { data } = await axios.post(`${API_BASE_URL}${endpoint}`, employeeData);
-        savedEmployeeData = data.data;
+        if (isEditing) {
+          const endpoint = initialEmployee.personnel_type === "Labor"
+            ? `/admin/labour/${encodeURIComponent(initialEmployee.emp_id)}`
+            : `/material/employees/${encodeURIComponent(initialEmployee.emp_id)}`;
+          const { data } = await axios.put(`${API_BASE_URL}${endpoint}`, employeeData);
+          savedEmployeeData = {
+            ...initialEmployee,
+            ...data.data,
+            personnel_type: initialEmployee.personnel_type,
+          };
+        } else {
+          const endpoint = isLabor ? "/admin/add-labour" : "/material/add-employee";
+          const { data } = await axios.post(`${API_BASE_URL}${endpoint}`, employeeData);
+          savedEmployeeData = data.data;
+        }
       }
 
       await onSave(savedEmployeeData, designation);
       setFormData(initialFormData);
     } catch (error) {
-      console.error("Error adding personnel:", error.response?.data || error);
-      const message = error.response?.data?.message || error.response?.data?.errors?.join(", ") || "Failed to add personnel. Please try again.";
+      console.error(`Error ${isEditing ? "updating" : "adding"} personnel:`, error.response?.data || error);
+      const message = error.response?.data?.message || error.response?.data?.errors?.join(", ") || `Failed to ${isEditing ? "update" : "add"} personnel. Please try again.`;
       setErrors({ form: message });
     } finally {
       setLoading((previous) => ({ ...previous, form: false }));
@@ -255,7 +303,7 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
     ] : []),
     { label: "Mobile", name: "mobile", type: "tel", placeholder: "10 digits, optional +91", icon: Phone },
     { label: "Company Email", name: "company_email", type: "email", placeholder: "e.g., name@company.com", icon: Mail },
-    ...(!isLabor ? [{ label: "Password", name: "user_password", type: "password", placeholder: "At least 8 characters", icon: LockKeyhole }] : []),
+    ...(!isLabor && !isEditing ? [{ label: "Password", name: "user_password", type: "password", placeholder: "At least 8 characters", icon: LockKeyhole }] : []),
     { label: isLabor ? "Salary Per Day" : "Salary Per Month", name: "approved_salary", type: "number", placeholder: "Enter salary", icon: DollarSign },
     { label: "Aadhaar Number", name: "aadhaar_number", type: "text", placeholder: "12 digits", icon: FileText },
     { label: "ESIC Number", name: "esic_number", type: "text", placeholder: "17 digits", icon: FileText },
@@ -279,7 +327,7 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
   return (
     <div className="fixed inset-0 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="w-full max-w-4xl bg-white rounded-xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto" onClick={(event) => event.stopPropagation()}>
-        <h4 className="text-lg font-semibold text-gray-700 mb-4">Add Resource</h4>
+        <h4 className="text-lg font-semibold text-gray-700 mb-4">{isEditing ? "Edit Resource Details" : "Add Resource"}</h4>
         {errors.form && <div className="mb-4 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-md text-sm">{errors.form}</div>}
         <form onSubmit={handleSubmit}>
           <div className="grid md:grid-cols-2 gap-4">
@@ -321,7 +369,7 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
                       value={formData[field.name]}
                       onChange={handleInputChange}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm disabled:bg-gray-100"
-                      disabled={field.loading || isAddingEmployee}
+                      disabled={field.loading || isAddingEmployee || (isEditing && field.name === "emp_type_id")}
                       required={isFieldRequired(field.name)}
                     >
                       <option value="">Select {field.label}</option>
@@ -352,6 +400,7 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
                     placeholder={field.placeholder}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                     disabled={isAddingEmployee}
+                    readOnly={isEditing && field.name === "emp_id"}
                     required={isFieldRequired(field.name)}
                     maxLength={field.name === "user_password" ? 72 : undefined}
                     step={field.name === "approved_salary" ? "0.01" : undefined}
@@ -372,7 +421,7 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
           <div className="flex justify-end gap-2 mt-6">
             <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300" disabled={isAddingEmployee}>Cancel</button>
             <button type="submit" disabled={loading.form || isAddingEmployee} className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-70 disabled:cursor-not-allowed">
-              {loading.form || isAddingEmployee ? <><Loader2 className="h-5 w-5 mr-2 animate-spin inline" />Saving...</> : <><Save className="h-5 w-5 mr-2 inline" />Save</>}
+              {loading.form || isAddingEmployee ? <><Loader2 className="h-5 w-5 mr-2 animate-spin inline" />Saving...</> : <><Save className="h-5 w-5 mr-2 inline" />{isEditing ? "Update" : "Save"}</>}
             </button>
           </div>
         </form>

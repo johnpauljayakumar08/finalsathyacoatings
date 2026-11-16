@@ -282,6 +282,11 @@ exports.fetchEmployees = async (req, res) => {
       db.query(
         `SELECT
           em.emp_id,
+          em.gender_id,
+          em.dept_id,
+          em.emp_type_id,
+          em.designation_id,
+          em.status_id,
           em.full_name,
           COALESCE(eg.gender, 'Unknown') AS gender,
           em.date_of_birth,
@@ -326,6 +331,11 @@ exports.fetchEmployees = async (req, res) => {
       db.query(
         `SELECT
           CAST(l.id AS CHAR) AS emp_id,
+          l.gender_id,
+          l.dept_id,
+          l.emp_type_id,
+          l.designation_id,
+          l.status_id,
           l.full_name,
           COALESCE(eg.gender, 'Unknown') AS gender,
           l.date_of_birth,
@@ -953,6 +963,183 @@ exports.updateEmployeeLogin = async (req, res) => {
       status: 'error',
       message: 'Failed to update employee login details',
     });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+exports.updateEmployeeDetails = async (req, res) => {
+  const { empId } = req.params;
+  const {
+    full_name, gender_id, date_of_birth, date_of_joining, status_id,
+    emp_type_id, designation_id, mobile, company_email, current_address,
+    permanent_address, aadhaar_number, esic_number, pf_number,
+    approved_salary, bank_account_number, bank_account_holder_name,
+    bank_name, bank_ifsc_code, bank_branch,
+  } = req.body;
+
+  const salaryValue = Number(approved_salary);
+  const mobileRegex = /^(?:\+91)?\d{10}$/;
+  const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  const clean = (value) => String(value ?? '').trim();
+  const bankAccountRegex = /^[A-Za-z0-9-]{6,34}$/;
+  const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/i;
+  if (!empId || !clean(full_name) || !gender_id || !dateRegex.test(date_of_birth || '') ||
+      !dateRegex.test(date_of_joining || '') || !status_id || !emp_type_id ||
+      !designation_id || !mobileRegex.test(mobile || '') ||
+      !emailRegex.test(clean(company_email)) || !clean(current_address) ||
+      !clean(permanent_address) || !/^\d{12}$/.test(clean(aadhaar_number)) ||
+      !/^\d{17}$/.test(clean(esic_number)) || !clean(pf_number) ||
+      !bankAccountRegex.test(clean(bank_account_number)) ||
+      !clean(bank_account_holder_name) || !clean(bank_name) ||
+      !ifscRegex.test(clean(bank_ifsc_code)) || !clean(bank_branch) ||
+      !Number.isFinite(salaryValue) || salaryValue <= 0 ||
+      !/^\d+(\.\d{1,2})?$/.test(String(approved_salary))) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'All required employee and bank fields must be provided with valid values',
+    });
+  }
+
+  let connection;
+  let transactionStarted = false;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
+
+    const [employees] = await connection.query(
+      'SELECT company_email FROM employee_master WHERE emp_id = ? FOR UPDATE',
+      [empId]
+    );
+    if (!employees.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(404).json({ status: 'error', message: 'Employee not found' });
+    }
+
+    const oldEmail = employees[0].company_email;
+    const [employmentTypes] = await connection.query(
+      'SELECT type FROM employment_type WHERE id = ?',
+      [emp_type_id]
+    );
+    if (!employmentTypes.length || String(employmentTypes[0].type).toLowerCase() === 'labor') {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(400).json({
+        status: 'error',
+        message: 'Select a valid non-labor employee type',
+      });
+    }
+
+    const [duplicates] = await connection.query(
+      'SELECT emp_id FROM employee_master WHERE company_email = ? AND emp_id <> ? FOR UPDATE',
+      [clean(company_email), empId]
+    );
+    if (duplicates.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(400).json({ status: 'error', message: 'An employee already uses this email address' });
+    }
+    const [labourDuplicates] = await connection.query(
+      'SELECT id FROM labour WHERE company_email = ? FOR UPDATE',
+      [clean(company_email)]
+    );
+    if (labourDuplicates.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(400).json({ status: 'error', message: 'A labor record already uses this email address' });
+    }
+
+    const [accounts] = await connection.query(
+      'SELECT user_id FROM users WHERE user_email = ? FOR UPDATE',
+      [oldEmail]
+    );
+    const [emailConflicts] = await connection.query(
+      'SELECT user_id FROM users WHERE user_email = ? AND user_email <> ? FOR UPDATE',
+      [clean(company_email), oldEmail]
+    );
+    if (emailConflicts.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(400).json({ status: 'error', message: 'A login account already uses this email address' });
+    }
+    if (accounts.length) {
+      const [designations] = await connection.query(
+        'SELECT designation FROM emp_designation WHERE id = ?',
+        [designation_id]
+      );
+      if (!designations.length) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(400).json({ status: 'error', message: 'Invalid employee designation' });
+      }
+      const roleName = getEmployeeRoleName(designations[0].designation);
+      if (!roleName) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(400).json({
+          status: 'error',
+          message: `No login role is configured for the ${designations[0].designation} designation`,
+        });
+      }
+      const [roles] = await connection.query(
+        'SELECT role_id FROM roles WHERE LOWER(role_name) = ?',
+        [roleName]
+      );
+      if (!roles.length) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(500).json({
+          status: 'error',
+          message: `The ${roleName} role is not configured in the database`,
+        });
+      }
+      await connection.query(
+        'UPDATE users SET user_name = ?, user_email = ?, role_id = ? WHERE user_id = ?',
+        [clean(company_email), clean(company_email), roles[0].role_id, accounts[0].user_id]
+      );
+    }
+
+    await connection.query(
+      `UPDATE employee_master
+       SET full_name = ?, gender_id = ?, date_of_birth = ?, date_of_joining = ?,
+           status_id = ?, emp_type_id = ?, designation_id = ?, mobile = ?,
+           company_email = ?, current_address = ?, permanent_address = ?,
+           aadhaar_number = ?, esic_number = ?, pf_number = ?, approved_salary = ?,
+           bank_account_number = ?, bank_account_holder_name = ?, bank_name = ?,
+           bank_ifsc_code = ?, bank_branch = ?
+       WHERE emp_id = ?`,
+      [
+        clean(full_name), gender_id, date_of_birth, date_of_joining, status_id,
+        emp_type_id, designation_id, mobile, clean(company_email),
+        clean(current_address), clean(permanent_address), clean(aadhaar_number),
+        clean(esic_number), clean(pf_number), salaryValue, clean(bank_account_number),
+        clean(bank_account_holder_name), clean(bank_name), clean(bank_ifsc_code),
+        clean(bank_branch), empId,
+      ]
+    );
+
+    await connection.commit();
+    transactionStarted = false;
+    return res.status(200).json({
+      status: 'success',
+      message: 'Employee details updated successfully',
+      data: { emp_id: empId, full_name: clean(full_name), designation_id },
+    });
+  } catch (error) {
+    if (transactionStarted && connection) {
+      await connection.rollback();
+    }
+    console.error('Error updating employee details:', error);
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'An employee or login account already uses this email address',
+      });
+    }
+    return res.status(500).json({ status: 'error', message: 'Failed to update employee details' });
   } finally {
     if (connection) connection.release();
   }
