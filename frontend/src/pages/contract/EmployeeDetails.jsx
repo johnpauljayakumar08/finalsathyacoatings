@@ -44,6 +44,8 @@ const EMPLOYEE_IMPORT_COLUMNS = [
   { header: "PF Number (Optional)", key: "pf_number" },
 ];
 
+const PERSONNEL_CATEGORIES = ["Labor", "Engineer", "Office Staff", "Factory Staff"];
+const normalizePersonnelCategory = (value) => String(value || "").replace(/[^a-z]/gi, "").toLowerCase();
 
 const EmployeeDetails = () => {
   const { encodedUserId } = useParams();
@@ -55,7 +57,7 @@ const EmployeeDetails = () => {
   const [showAddEmployeeModal, setShowAddEmployeeModal] = useState(false);
   const [editingPersonnel, setEditingPersonnel] = useState(null);
   const [editingLoginEmployee, setEditingLoginEmployee] = useState(null);
-  const [activePersonnelTab, setActivePersonnelTab] = useState("Employees");
+  const [activePersonnelTab, setActivePersonnelTab] = useState("Labor");
   const [loginForm, setLoginForm] = useState({ user_password: "" });
   const [isUpdatingLogin, setIsUpdatingLogin] = useState(false);
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
@@ -440,20 +442,29 @@ const EmployeeDetails = () => {
     setShowFilter(false);
   };
 
-  const nonLaborEmployees = employees.filter((person) => person.personnel_type !== "Labor");
-  const labours = employees.filter((person) => person.personnel_type === "Labor");
-  const visiblePersonnel = activePersonnelTab === "Employees" ? nonLaborEmployees : labours;
+  const personnelByCategory = PERSONNEL_CATEGORIES.reduce((groups, category) => {
+    const categoryKey = normalizePersonnelCategory(category);
+    groups[category] = employees.filter((person) => {
+      const employmentType = normalizePersonnelCategory(person.employment_type);
+      return employmentType === categoryKey ||
+        (!employmentType && category === "Labor" && person.personnel_type === "Labor");
+    });
+    return groups;
+  }, {});
+  const visiblePersonnel = personnelByCategory[activePersonnelTab] || [];
 
   // Refresh personnel data after personnel records are created or edited.
   const handleSaveEmployee = async (newEmployeeData) => {
     const wasEditing = Boolean(editingPersonnel);
-    const personnelType = newEmployeeData.personnel_type || (newEmployeeData.id ? "Labor" : "Employee");
+    const personnelType = PERSONNEL_CATEGORIES.find(
+      (category) => normalizePersonnelCategory(category) === normalizePersonnelCategory(newEmployeeData.employment_type)
+    ) || (newEmployeeData.personnel_type === "Labor" || newEmployeeData.id ? "Labor" : "Engineer");
     try {
       setIsAddingEmployee(true);
 
       await fetchEmployees();
       await fetchFilterOptions();
-      setActivePersonnelTab(personnelType === "Labor" ? "Labor" : "Employees");
+      setActivePersonnelTab(personnelType);
 
       Swal.fire({
         position: "top-end",
@@ -695,10 +706,7 @@ const EmployeeDetails = () => {
         )}
 
         <div className="mb-4 flex flex-wrap gap-2" role="tablist" aria-label="Personnel tables">
-          {[
-            { label: "Employees", count: nonLaborEmployees.length },
-            { label: "Labor", count: labours.length },
-          ].map(({ label, count }) => (
+          {PERSONNEL_CATEGORIES.map((label) => (
             <button
               key={label}
               type="button"
@@ -711,7 +719,7 @@ const EmployeeDetails = () => {
                   : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
               }`}
             >
-              {label} ({count})
+              {label} ({personnelByCategory[label].length})
             </button>
           ))}
         </div>

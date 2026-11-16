@@ -267,6 +267,10 @@ const AddEmployee = ({
         }
       }
 
+      savedEmployeeData = {
+        ...savedEmployeeData,
+        employment_type: selectedEmploymentType?.type || initialEmployee?.employment_type || "",
+      };
       await onSave(savedEmployeeData, designation);
       setFormData(initialFormData);
     } catch (error) {
