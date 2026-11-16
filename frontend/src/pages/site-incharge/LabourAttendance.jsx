@@ -1,4 +1,4 @@
-import { API_BASE_URL } from "../../config/api.js";
+import { API_BASE_URL, siteInchargeRequestConfig } from "../../config/api.js";
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { ToastContainer, toast } from "react-toastify";
@@ -29,16 +29,21 @@ const LabourAttendance = () => {
   useEffect(() => {
     const fetchCompanies = async () => {
       try {
-        const response = await axios.get(`${API_BASE_URL}/project/companies`);
+        const response = await axios.get(
+          `${API_BASE_URL}/project/site-incharge/projects-with-sites`,
+          siteInchargeRequestConfig()
+        );
         if (Array.isArray(response.data) && response.data.length > 0) {
-          setCompanies(response.data);
+          setCompanies([...new Map(response.data.map(project => [
+            project.company_id,
+            { company_id: project.company_id, company_name: project.company_name }
+          ])).values()]);
         } else {
-          setError("No companies found");
-          toast.error("No companies found");
+          setCompanies([]);
         }
       } catch (err) {
-        setError("Failed to fetch companies");
-        toast.error("Failed to fetch companies");
+        setError("Failed to fetch assigned projects");
+        toast.error("Failed to fetch assigned projects");
       }
     };
     fetchCompanies();
@@ -48,7 +53,10 @@ const LabourAttendance = () => {
     if (selectedCompany) {
       const fetchProjectsAndSites = async () => {
         try {
-          const response = await axios.get(`${API_BASE_URL}/project/projects-with-sites`);
+          const response = await axios.get(
+            `${API_BASE_URL}/project/site-incharge/projects-with-sites`,
+            siteInchargeRequestConfig()
+          );
           if (Array.isArray(response.data) && response.data.length > 0) {
             const filteredProjects = response.data.filter(project => project.company_id === selectedCompany.value);
             setProjects(filteredProjects);
@@ -104,7 +112,13 @@ const LabourAttendance = () => {
       const fetchWorkDescriptions = async () => {
         setLoading(true);
         try {
-          const response = await axios.get(`${API_BASE_URL}/site-incharge/work-descriptions?site_id=${selectedSite.value}`);
+          const response = await axios.get(
+            `${API_BASE_URL}/site-incharge/assigned-work-descriptions`,
+            {
+              ...siteInchargeRequestConfig(),
+              params: { site_id: selectedSite.value }
+            }
+          );
           setWorkDescriptions(response.data.data || []);
           setError(null);
         } catch (err) {

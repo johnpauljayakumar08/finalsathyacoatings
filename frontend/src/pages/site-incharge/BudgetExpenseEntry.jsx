@@ -1,4 +1,4 @@
-import { API_BASE_URL } from "../../config/api.js";
+import { API_BASE_URL, siteInchargeRequestConfig } from "../../config/api.js";
 // import React, { useState, useEffect, useRef } from "react";
 // import axios from "axios";
 // import { ToastContainer, toast } from "react-toastify";
@@ -874,8 +874,14 @@ const BudgetExpenseEntry = () => {
 
   const fetchCompanies = async () => {
     try {
-      const res = await axios.get(`${API_BASE_URL}/project/companies`);
-      setCompanies(res.data || []);
+      const res = await axios.get(
+        `${API_BASE_URL}/project/site-incharge/projects-with-sites`,
+        siteInchargeRequestConfig()
+      );
+      setCompanies([...new Map((res.data || []).map(project => [
+        project.company_id,
+        { company_id: project.company_id, company_name: project.company_name }
+      ])).values()]);
     } catch (error) {
       setError("Failed to fetch companies");
       toast.error("Failed to fetch companies");
@@ -884,7 +890,10 @@ const BudgetExpenseEntry = () => {
 
   const fetchProjectsForCompany = async (companyId) => {
     try {
-      const res = await axios.get(`${API_BASE_URL}/project/projects-with-sites/${companyId}`);
+      const res = await axios.get(
+        `${API_BASE_URL}/project/site-incharge/projects-with-sites`,
+        { ...siteInchargeRequestConfig(), params: { company_id: companyId } }
+      );
       setProjects(res.data || []);
     } catch (error) {
       setError("Failed to fetch projects");
@@ -894,7 +903,10 @@ const BudgetExpenseEntry = () => {
 
   const fetchWorkDescriptions = async (siteId) => {
     try {
-      const res = await axios.get(`${API_BASE_URL}/site-incharge/budget-work-descriptions/${siteId}`);
+      const res = await axios.get(
+        `${API_BASE_URL}/site-incharge/assigned-work-descriptions`,
+        { ...siteInchargeRequestConfig(), params: { site_id: siteId } }
+      );
       setWorkDescOptions(res.data.data || []);
     } catch (error) {
       setError("Failed to fetch work descriptions");

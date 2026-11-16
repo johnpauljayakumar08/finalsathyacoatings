@@ -1,4 +1,4 @@
-import { API_BASE_URL } from "../../config/api.js";
+import { API_BASE_URL, siteInchargeRequestConfig } from "../../config/api.js";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import Select from "react-select";
@@ -66,12 +66,16 @@ const WorkAndMaterialEntry = () => {
   useEffect(() => {
     const loadOptions = async () => {
       try {
-        const [companyResponse, projectResponse] = await Promise.all([
-          axios.get(`${API}/project/companies`),
-          axios.get(`${API}/project/projects-with-sites`)
-        ]);
-        setCompanies(Array.isArray(companyResponse.data) ? companyResponse.data : []);
-        setAllProjects(Array.isArray(projectResponse.data) ? projectResponse.data : []);
+        const projectResponse = await axios.get(
+          `${API}/project/site-incharge/projects-with-sites`,
+          siteInchargeRequestConfig()
+        );
+        const assignedProjects = Array.isArray(projectResponse.data) ? projectResponse.data : [];
+        setCompanies([...new Map(assignedProjects.map(project => [
+          project.company_id,
+          { company_id: project.company_id, company_name: project.company_name }
+        ])).values()]);
+        setAllProjects(assignedProjects);
       } catch (error) {
         console.error("Failed to load company/project options:", error);
         toast.error("Failed to load company and project options");
@@ -174,9 +178,13 @@ const WorkAndMaterialEntry = () => {
     }
     const loadWorkDescriptions = async () => {
       try {
-        const response = await axios.get(`${API}/material/work-descriptions`, {
-          params: { site_id: selectedSite.value }
-        });
+        const response = await axios.get(
+          `${API}/site-incharge/assigned-work-descriptions`,
+          {
+            ...siteInchargeRequestConfig(),
+            params: { site_id: selectedSite.value }
+          }
+        );
         setWorkDescriptions(Array.isArray(response.data.data) ? response.data.data : []);
       } catch (error) {
         console.error("Failed to load work descriptions:", error);

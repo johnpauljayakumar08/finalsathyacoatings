@@ -4,7 +4,7 @@ import axios from "axios";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import Select from "react-select";
-import { Save, Users, UserCheck, Calendar, Building, HardHat, Pencil, X } from "lucide-react";
+import { Save, UserCheck, Calendar, Building, HardHat, Pencil, X } from "lucide-react";
 import { useParams } from "react-router-dom";
 
 // Define colors from the logo for a consistent theme
@@ -41,7 +41,6 @@ const WorkForcePlanning = () => {
   const [sites, setSites] = useState([]);
   const [workDescriptions, setWorkDescriptions] = useState([]);
   const [employees, setEmployees] = useState([]);
-  const [labourEmployees, setLabourEmployees] = useState([]);
   const [selectedCompany, setSelectedCompany] = useState(null);
   const [selectedProject, setSelectedProject] = useState(null);
   const [selectedSite, setSelectedSite] = useState(null);
@@ -55,17 +54,13 @@ const WorkForcePlanning = () => {
   const [editAssignmentEmployee, setEditAssignmentEmployee] = useState(null);
   const [editAssignmentMode, setEditAssignmentMode] = useState("in_person");
   const [savingAssignmentEdit, setSavingAssignmentEdit] = useState(false);
-  const [selectedLabour, setSelectedLabour] = useState([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
-  const [activeTab, setActiveTab] = useState("incharge");
 
   const [inchargeFromDate, setInchargeFromDate] = useState(getLocalDateInput);
   const [inchargeToDate, setInchargeToDate] = useState(getLocalDateInput);
   const [inchargeAssignmentDate, setInchargeAssignmentDate] = useState(getLocalDateInput);
-  const [labourFromDate, setLabourFromDate] = useState(getLocalDateInput);
-  const [labourToDate, setLabourToDate] = useState(getLocalDateInput);
 
   // All logic hooks remain unchanged...
   useEffect(() => {
@@ -93,18 +88,14 @@ const WorkForcePlanning = () => {
     const fetchEmployees = async () => {
       setLoading(true);
       try {
-        const [empResponse, labourResponse] = await Promise.all([
-          axios.get(`${API_BASE_URL}/site-incharge/employees`),
-          axios.get(`${API_BASE_URL}/admin/labour`),
-        ]);
+        const empResponse = await axios.get(`${API_BASE_URL}/site-incharge/employees`);
         if (isMounted) {
           setEmployees(empResponse.data.data || []);
-          setLabourEmployees(labourResponse.data.data || []);
           setError(null);
         }
       } catch (err) {
         if (isMounted) {
-          toast.error("Failed to fetch employees or labours");
+          toast.error("Failed to fetch employees");
         }
       } finally {
         if (isMounted) {
@@ -125,7 +116,6 @@ const WorkForcePlanning = () => {
       setSelectedWorkDesc(null);
       setSelectedIncharges([]);
       setCurrentInchargeAssignments([]);
-      setSelectedLabour([]);
       setEditingAssignment(null);
     }
   }, [selectedCompany]);
@@ -139,7 +129,6 @@ const WorkForcePlanning = () => {
       setSelectedWorkDesc(null);
       setSelectedIncharges([]);
       setCurrentInchargeAssignments([]);
-      setSelectedLabour([]);
       setEditingAssignment(null);
     }
   }, [selectedProject, projects]);
@@ -210,10 +199,8 @@ const WorkForcePlanning = () => {
     }
 
     const hasIncharge = selectedIncharges.length > 0;
-    const hasLabour = selectedLabour.length > 0;
-
-    if (!hasIncharge && !hasLabour) {
-        toast.error("Please select at least one site incharge or labour employee.");
+    if (!hasIncharge) {
+        toast.error("Please select at least one site incharge.");
         return;
     }
 
@@ -221,11 +208,6 @@ const WorkForcePlanning = () => {
         toast.error("Incharge 'To Date' cannot be earlier than 'From Date'.");
         return;
     }
-    if (hasLabour && new Date(labourToDate) < new Date(labourFromDate)) {
-        toast.error("Labour 'To Date' cannot be earlier than 'From Date'.");
-        return;
-    }
-
     setSubmitting(true);
     try {
         if (hasIncharge) {
@@ -240,17 +222,6 @@ const WorkForcePlanning = () => {
             setInchargeAssignmentsRefresh((current) => current + 1);
         }
 
-        if (hasLabour) {
-            const labourPayload = {
-                project_id: selectedProject.value, site_id: selectedSite.value, desc_id: selectedWorkDesc.value,
-                labour_ids: selectedLabour.map(l => l.value), from_date: labourFromDate, to_date: labourToDate,
-                created_by: parseInt(user_id),
-            };
-            await axios.post(`${API_BASE_URL}/site-incharge/save-labour-assignment`, labourPayload);
-            toast.success("Labour assigned successfully.");
-        }
-
-        setSelectedLabour([]);
     } catch (err) {
         toast.error(err.response?.data?.message || "An error occurred while saving.");
     } finally {
@@ -313,8 +284,6 @@ const WorkForcePlanning = () => {
     label: `${e.emp_id} - ${e.full_name}`,
     isDisabled: currentAssignmentEmployeeIds.has(e.emp_id),
   }));
-  const labourOptions = labourEmployees.map(l => ({ value: l.id, label: l.full_name }));
-
   // Custom styles for react-select to match the new theme
   const customSelectStyles = {
     control: (provided, state) => ({
@@ -369,25 +338,7 @@ const WorkForcePlanning = () => {
             </div>
           )}
           
-          <div className="border-b border-gray-200 mb-6">
-            <nav className="-mb-px flex space-x-6" aria-label="Tabs">
-              <button
-                onClick={() => setActiveTab("incharge")}
-                className={`whitespace-nowrap flex items-center py-3 px-1 border-b-2 font-medium text-sm ${activeTab === 'incharge' ? 'text-teal-700 border-teal-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
-              >
-                <UserCheck size={16} className="mr-2" /> Assign Incharge
-              </button>
-              <button
-                onClick={() => setActiveTab("labour")}
-                className={`whitespace-nowrap flex items-center py-3 px-1 border-b-2 font-medium text-sm ${activeTab === 'labour' ? 'text-teal-700 border-teal-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
-              >
-                <Users size={16} className="mr-2" /> Assign Labour
-              </button>
-            </nav>
-          </div>
-
           <div>
-             {activeTab === "incharge" && (
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
@@ -524,25 +475,6 @@ const WorkForcePlanning = () => {
                     </div>
                   )}
                 </div>
-            )}
-             {activeTab === "labour" && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <label className="text-sm font-medium text-gray-700 mb-1 block">From Date</label>
-                      <input type="date" value={labourFromDate} onChange={e => setLabourFromDate(e.target.value)} className="w-full p-2 border-gray-300 rounded-md shadow-sm text-sm focus:ring-amber-500 focus:border-amber-500" />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-gray-700 mb-1 block">To Date</label>
-                      <input type="date" value={labourToDate} onChange={e => setLabourToDate(e.target.value)} className="w-full p-2 border-gray-300 rounded-md shadow-sm text-sm focus:ring-amber-500 focus:border-amber-500" />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 mb-1 block">Labour Employees</label>
-                    <Select options={labourOptions} value={selectedLabour} onChange={setSelectedLabour} placeholder="Search labour..." isMulti isSearchable isDisabled={!selectedWorkDesc} styles={customSelectStyles} />
-                  </div>
-                </div>
-            )}
           </div>
 
           <div className="mt-8 pt-6 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -555,7 +487,7 @@ const WorkForcePlanning = () => {
               onClick={handleSaveAssignments}
               style={{ backgroundColor: submitting ? '#9ca3af' : themeColors.primary }}
               className="w-full sm:w-auto flex items-center justify-center px-6 py-2.5 text-white font-semibold rounded-md shadow-sm hover:opacity-90 disabled:cursor-not-allowed transition-colors duration-200"
-              disabled={submitting || !selectedWorkDesc || (selectedIncharges.length === 0 && selectedLabour.length === 0)}
+              disabled={submitting || !selectedWorkDesc || selectedIncharges.length === 0}
             >
               <Save size={16} className="mr-2" />
               {submitting ? "Processing..." : "Save Assignments"}

@@ -1,4 +1,4 @@
-import { API_BASE_URL } from "../../config/api.js";
+import { API_BASE_URL, siteInchargeRequestConfig } from "../../config/api.js";
 // import React, { useState, useEffect } from "react";
 // import axios from "axios";
 // import Swal from "sweetalert2";
@@ -973,27 +973,19 @@ const AdditionalExpense = () => {
   };
 
   useEffect(() => {
-    const fetchCompanies = async () => {
-      try {
-        setLoading(true);
-        const response = await axios.get(`${API_BASE_URL}/project/companies`);
-        setCompanies(Array.isArray(response.data) ? response.data : []);
-      } catch (error) {
-        console.error("Error fetching companies:", error);
-        setError("Failed to load companies. Please try again.");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchCompanies();
-  }, []);
-
-  useEffect(() => {
     const fetchProjects = async () => {
       try {
         setLoading(true);
-        const response = await axios.get(`${API_BASE_URL}/project/projects-with-sites`);
-        setAllProjects(Array.isArray(response.data) ? response.data : []);
+        const response = await axios.get(
+          `${API_BASE_URL}/project/site-incharge/projects-with-sites`,
+          siteInchargeRequestConfig()
+        );
+        const assignedProjects = Array.isArray(response.data) ? response.data : [];
+        setAllProjects(assignedProjects);
+        setCompanies([...new Map(assignedProjects.map(project => [
+          project.company_id,
+          { company_id: project.company_id, company_name: project.company_name }
+        ])).values()]);
       } catch (error) {
         console.error("Error fetching projects:", error);
         setError("Failed to load projects. Please try again.");
@@ -1109,9 +1101,13 @@ const AdditionalExpense = () => {
 
       const fetchWorkDescriptions = async () => {
         try {
-          const response = await axios.get(`${API_BASE_URL}/material/work-descriptions`, {
-            params: { site_id: formData.site_id },
-          });
+          const response = await axios.get(
+            `${API_BASE_URL}/site-incharge/assigned-work-descriptions`,
+            {
+              ...siteInchargeRequestConfig(),
+              params: { site_id: formData.site_id }
+            }
+          );
           const descriptions = Array.isArray(response.data.data) ? response.data.data : [];
           setWorkDescriptions(descriptions);
           // Set default work description if available

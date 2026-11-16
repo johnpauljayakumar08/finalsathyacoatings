@@ -291,6 +291,41 @@ exports.getAllProjectsWithSites = async () => {
   return rows;
 };
 
+exports.getSiteInchargeProjectsWithSites = async (userId, companyId = null) => {
+  const [rows] = await db.query(
+    `SELECT DISTINCT
+        pd.pd_id AS project_id,
+        pd.project_name,
+        pt.type_description AS project_type,
+        c.company_name,
+        c.company_id,
+        sd.site_id,
+        sd.site_name,
+        sd.po_number,
+        sd.po_date,
+        sd.start_date,
+        sd.end_date,
+        si.incharge_type,
+        l.location_name
+     FROM siteincharge_assign sia
+     JOIN employee_master em ON em.emp_id = sia.emp_id
+     JOIN users u ON LOWER(TRIM(u.user_email)) = LOWER(TRIM(em.company_email))
+     JOIN site_details sd ON sd.site_id = sia.site_id AND sd.pd_id = sia.pd_id
+     JOIN project_details pd ON pd.pd_id = sia.pd_id
+     JOIN project_type pt ON pt.type_id = pd.project_type_id
+     JOIN company c ON c.company_id = pd.company_id
+     LEFT JOIN site_incharge si ON sd.incharge_id = si.incharge_id
+     LEFT JOIN location l ON sd.location_id = l.location_id
+     WHERE u.user_id = ?
+       AND sia.from_date <= CURRENT_DATE()
+       AND COALESCE(sia.to_date, '9999-12-31') >= CURRENT_DATE()
+       AND (? IS NULL OR c.company_id = ?)
+     ORDER BY pd.project_name, sd.site_name`,
+    [userId, companyId, companyId]
+  );
+  return rows;
+};
+
 exports.getAllProjectsWithSitesByCompanyId = async (companyId) => {
   const [rows] = await db.query(
     `

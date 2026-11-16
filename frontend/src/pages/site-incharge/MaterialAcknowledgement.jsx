@@ -1,4 +1,4 @@
-import { API_BASE_URL } from "../../config/api.js";
+import { API_BASE_URL, siteInchargeRequestConfig } from "../../config/api.js";
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { ToastContainer, toast } from "react-toastify";
@@ -40,25 +40,19 @@ const MaterialAcknowledgement = () => {
     }
   }, [encodedUserId]);
 
-  const fetchCompanies = async () => {
-    try {
-      setLoading(true);
-      const response = await axios.get(`${API_BASE_URL}/project/companies`);
-      setCompanies(response.data || []);
-    } catch (err) {
-      console.error("Failed to fetch companies:", err);
-      setError("Failed to fetch companies");
-      toast.error("Failed to fetch companies");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const fetchProjects = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_BASE_URL}/project/projects-with-sites`);
-      setAllProjects(response.data || []);
+      const response = await axios.get(
+        `${API_BASE_URL}/project/site-incharge/projects-with-sites`,
+        siteInchargeRequestConfig()
+      );
+      const assignedProjects = response.data || [];
+      setAllProjects(assignedProjects);
+      setCompanies([...new Map(assignedProjects.map(project => [
+        project.company_id,
+        { company_id: project.company_id, company_name: project.company_name }
+      ])).values()]);
     } catch (err) {
       console.error("Failed to fetch projects:", err);
       setError("Failed to fetch projects");
@@ -71,9 +65,10 @@ const MaterialAcknowledgement = () => {
   const fetchWorkDescriptions = async (site_id) => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_BASE_URL}/material/work-descriptions`, {
-        params: { site_id },
-      });
+      const response = await axios.get(
+        `${API_BASE_URL}/site-incharge/assigned-work-descriptions`,
+        { ...siteInchargeRequestConfig(), params: { site_id } }
+      );
       setWorkDescriptions(response.data.data || []);
     } catch (err) {
       console.error("Failed to fetch work descriptions:", err);
@@ -85,7 +80,6 @@ const MaterialAcknowledgement = () => {
   };
 
   useEffect(() => {
-    fetchCompanies();
     fetchProjects();
   }, []);
 

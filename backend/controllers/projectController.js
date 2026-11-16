@@ -476,6 +476,48 @@ exports.getAllProjectsWithSites = async (req, res) => {
     }
 };
 
+exports.getSiteInchargeProjectsWithSites = async (req, res) => {
+    try {
+        const userId = req.siteInchargeUser?.user_id;
+        if (!userId) {
+            return res.status(401).json({ error: "Authenticated site incharge user is missing" });
+        }
+
+        const companyId = typeof req.query.company_id === "string" && req.query.company_id.trim()
+            ? req.query.company_id.trim()
+            : null;
+        const projects = await projectModel.getSiteInchargeProjectsWithSites(userId, companyId);
+        const transformedProjects = projects.reduce((acc, project) => {
+            let existingProject = acc.find(item => item.project_id === project.project_id);
+            if (!existingProject) {
+                existingProject = {
+                    project_id: project.project_id,
+                    project_name: project.project_name,
+                    project_type: project.project_type,
+                    company_id: project.company_id,
+                    company_name: project.company_name,
+                    sites: []
+                };
+                acc.push(existingProject);
+            }
+            existingProject.sites.push({
+                site_id: project.site_id,
+                site_name: project.site_name,
+                po_number: project.po_number,
+                start_date: project.start_date,
+                end_date: project.end_date,
+                incharge_type: project.incharge_type || "N/A",
+                location_name: project.location_name || "N/A"
+            });
+            return acc;
+        }, []);
+        res.status(200).json(transformedProjects);
+    } catch (error) {
+        console.error("Error fetching site incharge projects:", error.message, error.stack);
+        res.status(500).json({ error: "Failed to fetch assigned projects and sites" });
+    }
+};
+
 exports.getAllProjectsWithSitesByCompanyId = async (req, res) => {
     try {
         const { companyId } = req.params;

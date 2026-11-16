@@ -48,6 +48,7 @@
 const express = require("express");
 const router = express.Router();
 const projectController = require("../controllers/projectController");
+const authorizeSiteIncharge = require("../middleware/authorizeSiteIncharge");
 
 router.post("/create-company", projectController.createCompany);
 router.get("/companies", projectController.getAllCompanies);
@@ -57,6 +58,7 @@ router.post("/create-project-site", projectController.createProjectWithSite);
 router.get("/workforce-types", projectController.fetchWorkforceTypes);
 router.get("/site-incharges", projectController.fetchSiteIncharges);
 router.get("/project-type", projectController.projectType);
+router.get("/site-incharge/projects-with-sites", authorizeSiteIncharge, projectController.getSiteInchargeProjectsWithSites);
 router.get("/projects-with-sites", projectController.getAllProjectsWithSites);
 router.get("/projects-with-sites/:companyId", projectController.getAllProjectsWithSitesByCompanyId);
 router.get("/locations", projectController.getAllLocations);

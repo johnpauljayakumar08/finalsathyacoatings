@@ -2741,6 +2741,44 @@ exports.updateBudgetExpenseEntry = async (req, res) => {
   }
 };
 
+exports.getAssignedWorkDescriptions = async (req, res) => {
+  const siteId = typeof req.query.site_id === 'string' ? req.query.site_id.trim() : '';
+  const userId = req.siteInchargeUser?.user_id;
+  if (!siteId) {
+    return res.status(400).json({ status: 'error', message: 'site_id is required' });
+  }
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Authenticated site incharge user is missing' });
+  }
+
+  try {
+    const [descriptions] = await db.query(
+      `SELECT DISTINCT wd.desc_id, wd.desc_name
+       FROM siteincharge_assign sia
+       JOIN employee_master em ON em.emp_id = sia.emp_id
+       JOIN users u ON LOWER(TRIM(u.user_email)) = LOWER(TRIM(em.company_email))
+       JOIN po_reckoner pr
+         ON pr.site_id = sia.site_id
+        AND (sia.desc_id IS NULL OR sia.desc_id = pr.desc_id)
+       JOIN work_descriptions wd ON wd.desc_id = pr.desc_id
+       WHERE u.user_id = ?
+         AND sia.site_id = ?
+         AND sia.from_date <= CURRENT_DATE()
+         AND COALESCE(sia.to_date, '9999-12-31') >= CURRENT_DATE()
+       ORDER BY wd.desc_name`,
+      [userId, siteId]
+    );
+    res.status(200).json({ status: 'success', data: descriptions });
+  } catch (error) {
+    console.error('Error fetching assigned work descriptions:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch assigned work descriptions',
+      error: error.message
+    });
+  }
+};
+
 exports.getBudgetWorkDescriptionsBySite = async (req, res) => {
   try {
     const { site_id } = req.params;

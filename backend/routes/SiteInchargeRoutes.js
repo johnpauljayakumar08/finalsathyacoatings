@@ -4,6 +4,7 @@ const router = express.Router();
 const SiteInchargeController = require("../controllers/SiteInchargeController");
 const ReportsController = require("../controllers/reportsController");
 const authorizeReports = require("../middleware/authorizeReports");
+const authorizeSiteIncharge = require("../middleware/authorizeSiteIncharge");
 
 router.get("/reports/filters", authorizeReports, ReportsController.getReportFilters);
 router.get("/reports/site-operations", authorizeReports, ReportsController.getSiteOperationsReports);
@@ -21,6 +22,7 @@ router.put("/update-material-usage-entry", SiteInchargeController.updateMaterial
 // Routes for labour assignment
 router.get('/employees', SiteInchargeController.getEmployeesByDesignation);
 router.post('/save-labour-assignment', SiteInchargeController.saveLabourAssignment);
+router.get('/assigned-work-descriptions', authorizeSiteIncharge, SiteInchargeController.getAssignedWorkDescriptions);
 router.get('/work-descriptions', SiteInchargeController.getWorkDescriptionsBySite);
 router.get('/assigned-labours', SiteInchargeController.getAssignedLabours);
 router.put('/update-labour-assignment', SiteInchargeController.updateLabourAssignment); // New route for update
