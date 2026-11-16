@@ -749,7 +749,8 @@ const saveMasterDcNo = async () => {
   const handleQuantityChange = (assignmentId, value) => {
     const assignment = assignedMaterials.find((a) => a.id === assignmentId);
     const maxQty = assignment.remaining_quantity || 0;
-    const dispatchQty = value ? Math.min(parseInt(value), maxQty) : 0;
+    const parsedQty = value === "" ? 0 : Number(value);
+    const dispatchQty = Number.isFinite(parsedQty) ? Math.min(parsedQty, maxQty) : 0;
 
     setDispatchQuantities((prev) => ({
       ...prev,
@@ -790,22 +791,20 @@ const saveMasterDcNo = async () => {
     let comp_a_qty = null,
       comp_b_qty = null,
       comp_c_qty = null;
-    let remaining = dispatchQty;
-
     if (assignment.comp_ratio_a !== null) {
-      comp_a_qty = Math.floor((assignment.comp_ratio_a / totalRatio) * dispatchQty);
-      remaining -= comp_a_qty;
+      comp_a_qty = Number(((assignment.comp_ratio_a / totalRatio) * dispatchQty).toFixed(3));
     }
     if (assignment.comp_ratio_b !== null) {
-      comp_b_qty = Math.floor((assignment.comp_ratio_b / totalRatio) * dispatchQty);
-      remaining -= comp_b_qty;
+      comp_b_qty = Number(((assignment.comp_ratio_b / totalRatio) * dispatchQty).toFixed(3));
     }
     if (assignment.comp_ratio_c !== null) {
-      comp_c_qty = Math.floor((assignment.comp_ratio_c / totalRatio) * dispatchQty);
-      remaining -= comp_c_qty;
+      comp_c_qty = Number(((assignment.comp_ratio_c / totalRatio) * dispatchQty).toFixed(3));
     }
 
-    if (remaining > 0) {
+    const remaining = Number((dispatchQty - [comp_a_qty, comp_b_qty, comp_c_qty]
+      .filter((quantity) => quantity !== null)
+      .reduce((sum, quantity) => sum + quantity, 0)).toFixed(3));
+    if (remaining !== 0) {
       if (assignment.comp_ratio_a !== null && comp_a_qty !== null) {
         comp_a_qty += remaining;
       } else if (assignment.comp_ratio_b !== null && comp_b_qty !== null) {
@@ -837,13 +836,13 @@ const saveMasterDcNo = async () => {
       const dispatchQty = dispatchQuantities[assignmentId].dispatch_qty;
       const assignmentRemarks = remarks[assignmentId];
       const { comp_a_qty, comp_b_qty, comp_c_qty } = calculateComponentQuantities(assignment, dispatchQty);
-      if (comp_a_qty !== null && !assignmentRemarks?.comp_a_remarks) {
+      if (comp_a_qty !== null && !assignmentRemarks?.comp_a_remarks?.trim()) {
         return false;
       }
-      if (comp_b_qty !== null && !assignmentRemarks?.comp_b_remarks) {
+      if (comp_b_qty !== null && !assignmentRemarks?.comp_b_remarks?.trim()) {
         return false;
       }
-      if (comp_c_qty !== null && !assignmentRemarks?.comp_c_remarks) {
+      if (comp_c_qty !== null && !assignmentRemarks?.comp_c_remarks?.trim()) {
         return false;
       }
     }
@@ -1462,6 +1461,7 @@ const handleDispatchSubmit = async () => {
                                 placeholder="Dispatch Qty"
                                 min="0"
                                 max={assignment.remaining_quantity}
+                                step="any"
                               />
                             </div>
                           </td>
@@ -1592,6 +1592,7 @@ const handleDispatchSubmit = async () => {
                         placeholder="Dispatch Qty"
                         min="0"
                         max={assignment.remaining_quantity}
+                        step="any"
                       />
                     </div>
                     <div>

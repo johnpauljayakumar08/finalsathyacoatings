@@ -667,6 +667,9 @@ const SiteInchargeAttendance = () => {
     if (!shift?.trim()) {
       return alert('Shift is required');
     }
+    if (!remarks?.trim()) {
+      return alert('Remarks are required');
+    }
 
     try {
       const res = await fetch(`${API_BASE_URL}/finance/siteincharge-attendance`, {
@@ -861,7 +864,9 @@ const SiteInchargeAttendance = () => {
                         <td className="px-6 py-4">
                           {editing ? (
                             <input
-                              type="text"
+                              type="number"
+                              step="0.1"
+                              min="0"
                               value={att.shift}
                               onChange={(e) => handleShiftChange(item.id, e.target.value)}
                               className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2"
@@ -878,6 +883,7 @@ const SiteInchargeAttendance = () => {
                             <textarea
                               value={att.remarks}
                               onChange={(e) => handleRemarksChange(item.id, e.target.value)}
+                              required
                               rows={2}
                               className="w-full px-3 py-2 border rounded resize-none focus:outline-none focus:ring-2"
                               style={{ borderColor: themeColors.border, '--tw-ring-color': themeColors.primary }}

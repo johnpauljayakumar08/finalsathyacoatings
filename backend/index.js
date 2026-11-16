@@ -74,6 +74,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const db = require("./config/db");
+const requireWriteRemarks = require("./middleware/requireWriteRemarks");
 
 // Import Routes
 const authRoutes = require("./routes/authRoute");
@@ -117,6 +118,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+app.use(requireWriteRemarks);
 
 // ====================== GLOBAL ERROR HANDLER ======================
 // This will help you see exactly why 400 errors are happening

@@ -185,9 +185,9 @@ const calculateCompQuantities = useCallback((mat) => {
     return { comp_a_qty: 0, comp_b_qty: 0, comp_c_qty: 0 };
   }
   return {
-    comp_a_qty: ((comp_a / total_parts) * quantity).toFixed(2),
-    comp_b_qty: ((comp_b / total_parts) * quantity).toFixed(2),
-    comp_c_qty: ((comp_c / total_parts) * quantity).toFixed(2),
+    comp_a_qty: ((comp_a / total_parts) * quantity).toFixed(3),
+    comp_b_qty: ((comp_b / total_parts) * quantity).toFixed(3),
+    comp_c_qty: ((comp_c / total_parts) * quantity).toFixed(3),
   };
 }, []);
 const overallCost = useMemo(() => {
@@ -547,8 +547,8 @@ const modalTotalCost = useMemo(() => {
         validationErrors.push("UOM required");
       }
       const quantity = Number(editingAssignment.quantity);
-      if (!Number.isFinite(quantity) || quantity <= 0 || Math.abs(quantity * 100 - Math.round(quantity * 100)) > 1e-8) {
-        validationErrors.push("Positive quantity with up to 2 decimal places required");
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        validationErrors.push("Positive quantity required");
       }
       if (!editingAssignment.rate || isNaN(editingAssignment.rate) || parseFloat(editingAssignment.rate) < 0) {
         validationErrors.push("Non-negative rate required");
@@ -724,8 +724,8 @@ const modalTotalCost = useMemo(() => {
           validationErrors.push(`Row ${index + 1}: UOM required`);
         }
         const quantity = Number(row.quantity);
-        if (!Number.isFinite(quantity) || quantity <= 0 || Math.abs(quantity * 100 - Math.round(quantity * 100)) > 1e-8) {
-          validationErrors.push(`Row ${index + 1}: Positive quantity with up to 2 decimal places required`);
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+          validationErrors.push(`Row ${index + 1}: Positive quantity required`);
         }
         if (!row.rate || isNaN(row.rate) || parseFloat(row.rate) < 0) {
           validationErrors.push(`Row ${index + 1}: Non-negative rate required`);
@@ -1213,9 +1213,10 @@ const canAddProjection = useMemo(() => {
     const review = await Swal.fire({
       title: decisionLabel,
       input: "textarea",
-      inputLabel: "MD review remark (optional)",
+      inputLabel: "MD review remark (required)",
       inputAttributes: { maxlength: "1000" },
       inputPlaceholder: "Add a note for the decision",
+      inputValidator: (value) => (value?.trim() ? undefined : "A review remark is required."),
       showCancelButton: true,
       confirmButtonText: decisionLabel,
       confirmButtonColor: decision === "approved" ? "#16a34a" : "#dc2626",
@@ -1236,7 +1237,7 @@ const canAddProjection = useMemo(() => {
     try {
       const response = await axios.put(
         `${API_BASE_URL}/projection/operational-cost-requests/${request.id}/review`,
-        { decision, review_remark: review.value || "" },
+        { decision, review_remark: review.value.trim() },
         { headers: { Authorization: `Bearer ${mdToken}` } }
       );
       await Promise.all([
@@ -1761,7 +1762,7 @@ const canAddProjection = useMemo(() => {
         desc_id: selectedWorkDescription?.value,
         calculation_type: projection.labourCalculationType,
         no_of_labours: projection.labourCalculationType === "no_of_labours" ? parseInt(projection.noOfLabours) : null,
-        total_shifts: projection.labourCalculationType === "total_shifts" ? parseInt(projection.totalShifts) : null,
+        total_shifts: projection.labourCalculationType === "total_shifts" ? parseFloat(projection.totalShifts) : null,
         rate_per_shift: parseFloat(projection.ratePerShift),
         total_cost: projection.labourTotalCost,
         overhead_type: "labours",
@@ -2371,7 +2372,7 @@ const canAddProjection = useMemo(() => {
                       </label>
                       <input
                         type="number"
-                        step="0.01"
+                        step="any"
                         max="100"
                         min={prevPerc}
                         value={projection.budgetPercentage}
@@ -2386,7 +2387,7 @@ const canAddProjection = useMemo(() => {
                       </label>
                       <input
                         type="number"
-                        step="0.01"
+                        step="any"
                         min={prevProjection?.budgetValue || 0}
                         value={projection.budgetValue}
                         onChange={(e) => handleBudgetValueChangeForProjection(projection.id, e)}
@@ -2724,8 +2725,8 @@ const canAddProjection = useMemo(() => {
                                             className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm disabled:bg-gray-100"
                                             required
                                             disabled={!isFormEnabled}
-                                            min="0.01"
-                                            step="0.01"
+                                            min="0.001"
+                                            step="any"
                                           />
                                         </div>
                                         <div>
@@ -2741,7 +2742,7 @@ const canAddProjection = useMemo(() => {
                                             required
                                             disabled={!isFormEnabled}
                                             min="0"
-                                            step="0.01"
+                                            step="any"
                                           />
                                           <div className="mt-2 text-sm text-gray-600">
                                             Overall Cost: ₹{totalCost}
@@ -2869,6 +2870,8 @@ const canAddProjection = useMemo(() => {
                               <label className="block text-sm font-medium mb-2">Total Estimated Shifts</label>
                               <input
                                 type="number"
+                                min="0.1"
+                                step="0.1"
                                 value={projection.totalShifts}
                                 onChange={(e) => handleTotalShiftsChange(projection.id, e.target.value)}
                                 disabled={isSubmitted}
@@ -3675,8 +3678,8 @@ const canAddProjection = useMemo(() => {
                       value={editingAssignment.quantity}
                       onChange={handleModalChange}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                      min="0.01"
-                      step="0.01"
+                      min="0.001"
+                      step="any"
                     />
                   </div>
                 </div>

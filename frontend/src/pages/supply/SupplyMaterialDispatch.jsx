@@ -1017,6 +1017,7 @@ const SupplyMaterialDispatch = () => {
                             placeholder="Qty"
                             min="0"
                             max={assignment.remaining_quantity}
+                            step="any"
                           />
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-700">{dispatchCost.toFixed(2)}</td>

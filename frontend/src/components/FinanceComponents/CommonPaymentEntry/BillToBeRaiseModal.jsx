@@ -23,9 +23,15 @@ const BillToBeRaiseModal = ({ isOpen, onClose, createdBy }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const remarks = formData.remarks.trim();
+    if (!remarks) {
+      alert('Remarks are required');
+      return;
+    }
     try {
       await axios.post(`${API_BASE_URL}/finance/create-bill-to-be-raise`, {
         ...formData,
+        remarks,
         created_by: createdBy || '1'
       });
       alert('Bill To Be Raise record saved successfully!');
@@ -88,7 +94,7 @@ const BillToBeRaiseModal = ({ isOpen, onClose, createdBy }) => {
             </div>
             <div className="md:col-span-2">
               <label className="block text-sm font-medium mb-1">Remarks</label>
-              <textarea name="remarks" value={formData.remarks} onChange={handleChange} rows="3" className="w-full px-4 py-3 border rounded-lg" />
+              <textarea name="remarks" value={formData.remarks} onChange={handleChange} rows="3" className="w-full px-4 py-3 border rounded-lg" required />
             </div>
           </div>
 

@@ -292,6 +292,8 @@ const CreateCreditors = ({ createdBy, onSuccess, onCancel }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.client_id) return alert('Client is required');
+    const remarks = (formData.remarks || '').trim();
+    if (!remarks) return alert('Remarks are required');
     if (creditorType === 'gst' && !formData.inv_number.trim()) {
       return alert('Invoice Number is required for GST Creditors');
     }
@@ -299,6 +301,7 @@ const CreateCreditors = ({ createdBy, onSuccess, onCancel }) => {
     try {
       await axios.post(`${API_BASE_URL}/finance/create-creditors`, {
         ...formData,
+        remarks,
         created_by: createdBy || '1'
       });
       alert('Creditor created successfully!');
@@ -411,7 +414,7 @@ const CreateCreditors = ({ createdBy, onSuccess, onCancel }) => {
 
       <div><label><Calendar size={16} className="inline mr-2" />PDC Date</label><input type="date" name="pdc_date" value={formData.pdc_date} onChange={(e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))} className={`${inputStyle.base} ${inputStyle.normal}`} /></div>
       <div><label><Package size={16} className="inline mr-2" />Item Code</label><input type="text" name="item_code" value={formData.item_code} onChange={(e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))} className={`${inputStyle.base} ${inputStyle.normal}`} /></div>
-      <div><label><Hash size={16} className="inline mr-2" />Quantity</label><input type="number" name="qty" value={formData.qty} onChange={(e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))} className={`${inputStyle.base} ${inputStyle.normal}`} /></div>
+      <div><label><Hash size={16} className="inline mr-2" />Quantity</label><input type="number" name="qty" value={formData.qty} onChange={(e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))} min="0" step="any" className={`${inputStyle.base} ${inputStyle.normal}`} /></div>
       <div><label><DollarSign size={16} className="inline mr-2" />Rate</label><input type="number" step="0.01" name="rate" value={formData.rate} onChange={(e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))} className={`${inputStyle.base} ${inputStyle.normal}`} /></div>
       <div><label><DollarSign size={16} className="inline mr-2" />Sale Amount</label><input type="number" step="0.01" name="sale_amount" value={formData.sale_amount} onChange={(e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))} className={`${inputStyle.base} ${inputStyle.normal}`} /></div>
       <div><label><Percent size={16} className="inline mr-2" />GST Amount</label><input type="number" step="0.01" name="gst_amount" value={formData.gst_amount} onChange={(e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))} className={`${inputStyle.base} ${inputStyle.normal}`} /></div>
@@ -484,12 +487,13 @@ const CreateCreditors = ({ createdBy, onSuccess, onCancel }) => {
           </div>
 
           <div className="lg:col-span-4">
-            <label><MessageSquare size={16} className="inline mr-2" />Remarks</label>
+            <label><MessageSquare size={16} className="inline mr-2" />Remarks *</label>
             <textarea
               name="remarks"
               value={formData.remarks}
               onChange={(e) => setFormData(prev => ({ ...prev, remarks: e.target.value }))}
               rows={4}
+              required
               className={`${inputStyle.base} ${inputStyle.normal} resize-none`}
             />
           </div>

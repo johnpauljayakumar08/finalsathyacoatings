@@ -353,7 +353,7 @@ const BilledDebtorsModal = ({ onClose, createdBy }) => {
                         name="quantity"
                         value={formData.quantity}
                         onChange={handleChange}
-                        step="0.01"
+                        step="0.001"
                         min="0"
                         className="px-3 py-2 border rounded-lg w-32"
                         style={{ borderColor: themeColors.border }}

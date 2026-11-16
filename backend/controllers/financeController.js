@@ -1,5 +1,11 @@
 const db = require('../config/db');
 
+const parseOptionalQuantity = value => {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : NaN;
+};
+
 exports.test = async (req, res) => {
   try {
     res.status(200).json({
@@ -189,6 +195,10 @@ exports.createCreditors = async (req, res) => {
         message: 'client_id and created_by are required'
       });
     }
+    const parsedQty = parseOptionalQuantity(qty);
+    if (Number.isNaN(parsedQty)) {
+      return res.status(400).json({ status: 'error', message: 'qty must be a non-negative number' });
+    }
 
     const formattedPoDate = formatDate(po_date);
     const formattedBillDate = formatDate(bill_date);
@@ -214,7 +224,7 @@ exports.createCreditors = async (req, res) => {
       formattedBillDate,
       formattedPdcDate,
       item_code || null,
-      qty || null,
+      parsedQty,
       rate || null,
       sale_amount || null,
       gst_amount || null,
@@ -362,6 +372,10 @@ exports.updateCreditors = async (req, res) => {
         message: 'id and updated_by are required'
       });
     }
+    const parsedQty = parseOptionalQuantity(qty);
+    if (Number.isNaN(parsedQty)) {
+      return res.status(400).json({ status: 'error', message: 'qty must be a non-negative number' });
+    }
 
     // Fetch current record
     const [currentRows] = await db.query('SELECT * FROM finance_creditors WHERE id = ?', [id]);
@@ -411,7 +425,7 @@ exports.updateCreditors = async (req, res) => {
     const params = [
       finance_bank_id || null,
       formattedPoDate, po_sent_through || null, inv_number || null,
-      formattedBillDate, formattedPdcDate, item_code || null, qty || null, rate || null,
+      formattedBillDate, formattedPdcDate, item_code || null, parsedQty, rate || null,
       sale_amount || null, gst_amount || null, total_payment_due || null,
       amount_paid || null, balance_amount || null, formattedDateOfPayment,
       formattedDueDate, remarks || null, is_gst ?? null, updated_by, id
@@ -608,9 +622,17 @@ exports.upsertSiteInchargeAttendance = async (req, res) => {
     const results = [];
     for (const att of attendances) {
       const { siteincharge_assign_id, shift, entry_date, remarks } = att;
+      const parsedShift = Number(shift);
 
-      if (!siteincharge_assign_id || !shift || !entry_date) {
+      if (!siteincharge_assign_id || !entry_date) {
         continue; // Skip invalid entries
+      }
+      if (!Number.isFinite(parsedShift) || parsedShift <= 0 || parsedShift > 99.9 ||
+          Math.round(parsedShift * 10) / 10 !== parsedShift) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'shift must be a positive number up to 99.9 with at most one decimal place'
+        });
       }
 
       const formattedEntryDate = formatDate(entry_date);
@@ -650,7 +672,7 @@ exports.upsertSiteInchargeAttendance = async (req, res) => {
           SET shift = ?, remarks = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP 
           WHERE id = ?
         `;
-        const updateParams = [shift, remarks || null, created_by, existingId];
+        const updateParams = [parsedShift, remarks || null, created_by, existingId];
         const [updateResult] = await db.query(updateSql, updateParams);
 
         if (updateResult.affectedRows > 0) {
@@ -663,7 +685,7 @@ exports.upsertSiteInchargeAttendance = async (req, res) => {
             siteincharge_assign_id, shift, created_by, entry_date, remarks
           ) VALUES (?, ?, ?, ?, ?)
         `;
-        const params = [siteincharge_assign_id, shift, created_by, formattedEntryDate, remarks || null];
+        const params = [siteincharge_assign_id, parsedShift, created_by, formattedEntryDate, remarks || null];
         const [result] = await db.query(sql, params);
 
         results.push({ id: result.insertId, siteincharge_assign_id, action: 'created' });
@@ -1651,6 +1673,10 @@ exports.createScaffoldingPayable = async (req, res) => {
         message: 'Missing required fields: client, project, category, or payment date'
       });
     }
+    const parsedQty = parseOptionalQuantity(qty);
+    if (Number.isNaN(parsedQty)) {
+      return res.status(400).json({ status: 'error', message: 'qty must be a non-negative number' });
+    }
 
     let parsedDate = date_of_payment;
     if (typeof date_of_payment === 'string' && date_of_payment.includes('T')) {
@@ -1672,7 +1698,7 @@ exports.createScaffoldingPayable = async (req, res) => {
     `;
 
     const [result] = await db.query(sql, [
-      finance_creditors_client_id, pd_id, cost_category_id, period || null, qty || null, rate || null,
+      finance_creditors_client_id, pd_id, cost_category_id, period || null, parsedQty, rate || null,
       sale, g, totalDue, parsedDate, paid, balance,
       finance_bank_id || null, created_by
     ]);
@@ -1704,6 +1730,10 @@ exports.updateScaffoldingPayable = async (req, res) => {
 
     if (!updated_by) {
       return res.status(400).json({ status: 'error', message: 'User ID is required for update' });
+    }
+    const parsedQty = parseOptionalQuantity(qty);
+    if (Number.isNaN(parsedQty)) {
+      return res.status(400).json({ status: 'error', message: 'qty must be a non-negative number' });
     }
 
     // Fetch old record
@@ -1747,7 +1777,7 @@ exports.updateScaffoldingPayable = async (req, res) => {
       finance_creditors_client_id || old.finance_creditors_client_id,
       cost_category_id || old.cost_category_id,
       period || old.period,
-      qty || old.qty,
+      parsedQty === null ? old.qty : parsedQty,
       rate || old.rate,
       sale, g, totalDue, parsedDate, paid, balance,
       finance_bank_id !== undefined ? finance_bank_id : old.finance_bank_id,
@@ -3187,6 +3217,10 @@ exports.createBilledDebtors = async (req, res) => {
       expected_dates,
       created_by
     } = req.body;
+    const parsedQuantity = parseOptionalQuantity(quantity);
+    if (Number.isNaN(parsedQuantity)) {
+      return res.status(400).json({ status: 'error', message: 'quantity must be a non-negative number' });
+    }
 
     if (!finance_party_id || !finance_bank_id || !created_by) {
       return res.status(400).json({ status: 'error', message: 'Party, Bank and created_by are required' });
@@ -3210,7 +3244,7 @@ exports.createBilledDebtors = async (req, res) => {
     const params = [
       finance_party_id, finance_bank_id, po_details || null, inv_no || null,
       bill_date || null, due_date, finance_item_id || null,
-      parseFloat(quantity) || 0, uom || null, parseFloat(rate) || 0,
+      parsedQuantity ?? 0, uom || null, parseFloat(rate) || 0,
       parseFloat(sale_amount) || 0, parseFloat(gst_amount) || 0,
       parsedTotalDue, date_of_receipt || null, parsedReceived > 0 ? parsedReceived : null,
       balance, created_by
@@ -3313,6 +3347,10 @@ exports.updateBilledDebtors = async (req, res) => {
       quantity, uom, rate, sale_amount, gst_amount, total_payment_due,
       date_of_receipt, amount_received, expected_dates = [], updated_by = 1
     } = req.body;
+    const parsedQuantity = parseOptionalQuantity(quantity);
+    if (Number.isNaN(parsedQuantity)) {
+      return res.status(400).json({ status: 'error', message: 'quantity must be a non-negative number' });
+    }
 
     if (!id) {
       return res.status(400).json({ status: 'error', message: 'ID is required in request body' });
@@ -3358,7 +3396,7 @@ exports.updateBilledDebtors = async (req, res) => {
       bill_date || null,
       due_date || null,
       finance_item_id || null,
-      quantity ? parseFloat(quantity) : 0,
+      parsedQuantity ?? 0,
       uom || null,
       rate ? parseFloat(rate) : 0,
       sale_amount ? parseFloat(sale_amount) : 0,

@@ -567,8 +567,13 @@ const CreateCreditors = ({ onSuccess }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const remarks = (formData.remarks || '').trim();
     if (!formData.client_id) {
       alert('Client is required');
+      return;
+    }
+    if (!remarks) {
+      alert('Remarks are required');
       return;
     }
 
@@ -576,6 +581,7 @@ const CreateCreditors = ({ onSuccess }) => {
     try {
       await axios.post(`${API_BASE_URL}/finance/create-creditors`, {
         ...formData,
+        remarks,
         finance_bank_id: formData.finance_bank_id || null,
         created_by: createdBy || '1' // Auto from URL
       });
@@ -730,7 +736,7 @@ const CreateCreditors = ({ onSuccess }) => {
 
           <div>
             <label className={labelStyle}><Hash size={16} className="inline mr-2" />Quantity</label>
-            <input type="number" name="qty" value={formData.qty} onChange={handleInputChange}
+            <input type="number" name="qty" value={formData.qty} onChange={handleInputChange} min="0" step="any"
               className={`${inputStyle.base} ${inputStyle.normal} ${inputStyle.focusRing}`} />
           </div>
 
@@ -811,7 +817,7 @@ const CreateCreditors = ({ onSuccess }) => {
 
               <div className="lg:col-span-4">
                 <label className={labelStyle}><MessageSquare size={16} className="inline mr-2" />Remarks</label>
-                <textarea name="remarks" value={formData.remarks} onChange={handleInputChange} rows={4}
+                <textarea name="remarks" value={formData.remarks} onChange={handleInputChange} rows={4} required
                   className={`${inputStyle.base} ${inputStyle.normal} ${inputStyle.focusRing} resize-none`}
                   placeholder="Any additional notes..." />
               </div>

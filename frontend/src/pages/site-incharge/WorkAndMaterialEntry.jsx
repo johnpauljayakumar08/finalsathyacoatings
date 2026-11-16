@@ -492,13 +492,14 @@ const WorkAndMaterialEntry = () => {
   };
 
   const saveLabourAttendance = async () => {
+    let missingRemarks = false;
     const attendanceData = assignedLabours.flatMap(labour => {
       const rawShift = labourShiftInputs[labour.assignment_id];
       if ((rawShift === "" || rawShift === undefined || rawShift === null) && !labour.attendance_id) return [];
       const shift = rawShift === "" || rawShift === undefined || rawShift === null
         ? Number(labour.shift)
         : Number(rawShift);
-      if (!Number.isFinite(shift) || shift <= 0 || Math.round(shift * 10) !== shift * 10) return [];
+      if (!Number.isFinite(shift) || shift <= 0) return [];
       const rawShiftCost = labourRateInputs[labour.assignment_id];
       const shiftCost = rawShiftCost === "" || rawShiftCost === undefined || rawShiftCost === null
         ? Number(labour.shift_rate)
@@ -511,6 +512,10 @@ const WorkAndMaterialEntry = () => {
         (labour.remarks || "") === remarks
       )) return [];
       if (labour.attendance_id && !labour.is_editable) return [];
+      if (!remarks) {
+        missingRemarks = true;
+        return [];
+      }
       return [{
         labour_assignment_id: labour.assignment_id,
         entry_date: selectedDate,
@@ -521,6 +526,10 @@ const WorkAndMaterialEntry = () => {
       }];
     });
 
+    if (missingRemarks) {
+      toast.error("Remarks are required for every attendance entry");
+      return;
+    }
     if (attendanceData.length === 0) {
       toast.error("Enter or change a valid positive shift (for example, 1 or 1.5) for an assigned labour");
       return;
@@ -579,15 +588,19 @@ const WorkAndMaterialEntry = () => {
     const labourAssignments = selectedAssignmentLabours.map(labour => ({
       labour_id: labour.value,
       shift: Number(labour.shifts),
-      shift_cost: Number(labour.shift_cost ?? labour.approved_salary)
+      shift_cost: Number(labour.shift_cost ?? labour.approved_salary),
+      remarks: (labour.remarks || "").trim()
     }));
     if (labourAssignments.some(labour =>
       !Number.isFinite(labour.shift) ||
       labour.shift <= 0 ||
-      labour.shift > 99.9 ||
-      Math.abs(labour.shift * 10 - Math.round(labour.shift * 10)) > 1e-8
+      labour.shift > 99.9
     )) {
       toast.error("Enter valid shifts for each labourer, such as 1 or 1.5");
+      return;
+    }
+    if (labourAssignments.some(labour => !labour.remarks)) {
+      toast.error("Remarks are required for each assigned labourer");
       return;
     }
     if (labourAssignments.some(labour =>
@@ -633,7 +646,8 @@ const WorkAndMaterialEntry = () => {
           labour_assignment_id: labour.assignment_id,
           entry_date: selectedDate,
           shift: assignment.shift,
-          shift_cost: assignment.shift_cost
+          shift_cost: assignment.shift_cost,
+          remarks: assignment.remarks
         };
       });
       setAssignedLabours(dailyLabours);
@@ -733,7 +747,7 @@ const WorkAndMaterialEntry = () => {
       });
 
     const invalid = entries.find(entry =>
-      !entry.ackId || !Number.isInteger(entry.quantity) || entry.quantity <= 0 ||
+      !entry.ackId || !Number.isFinite(entry.quantity) || entry.quantity <= 0 ||
       entry.quantity > entry.remaining || !entry.remarks
     );
     if (invalid) {
@@ -1011,7 +1025,7 @@ const WorkAndMaterialEntry = () => {
                                   <input
                                     type="number"
                                     min="0"
-                                    step="0.01"
+                                    step="any"
                                     value={completionEditInputs.area_added}
                                     onChange={event => updateCompletionEditInput("area_added", event.target.value)}
                                     className="w-full rounded border border-gray-300 px-2 py-1"
@@ -1024,6 +1038,7 @@ const WorkAndMaterialEntry = () => {
                                     onChange={event => updateCompletionEditInput("remarks", event.target.value)}
                                     className="w-full rounded border border-gray-300 px-2 py-1"
                                     aria-label="Edit work completion remarks"
+                                    required
                                   />
                                   {cumulativeArea - Number(entry.area_added) + Number(completionEditInputs.area_added) > assignedQuantity && (
                                     <div className="rounded bg-red-100 px-2 py-1 text-xs font-semibold text-red-800">
@@ -1085,7 +1100,7 @@ const WorkAndMaterialEntry = () => {
                         <input
                           type="number"
                           min="0"
-                          step="0.01"
+                          step="any"
                           value={completionInputs[record.rec_id]?.area_added || ""}
                           onChange={event => updateCompletionInput(record.rec_id, "area_added", event.target.value)}
                           placeholder="Work completed area/quantity"
@@ -1098,6 +1113,7 @@ const WorkAndMaterialEntry = () => {
                           onChange={event => updateCompletionInput(record.rec_id, "remarks", event.target.value)}
                           placeholder="Work remarks (required)"
                           className="rounded-md border border-gray-300 px-3 py-2"
+                          required
                         />
                         <button onClick={() => saveCompletion(record)} disabled={savingWork} className="inline-flex items-center justify-center gap-2 rounded-md bg-green-600 px-4 py-2 text-white hover:bg-green-700 disabled:opacity-60">
                           <Save size={16} /> Save work
@@ -1164,7 +1180,8 @@ const WorkAndMaterialEntry = () => {
                           return {
                             ...labour,
                             shifts: existing?.shifts ?? "",
-                            shift_cost: existing?.shift_cost ?? labour.approved_salary ?? ""
+                            shift_cost: existing?.shift_cost ?? labour.approved_salary ?? "",
+                            remarks: existing?.remarks ?? ""
                           };
                         }))}
                         isMulti
@@ -1185,12 +1202,26 @@ const WorkAndMaterialEntry = () => {
                               type="number"
                               min="0.1"
                               max="99.9"
-                              step="0.1"
+                              step="any"
                               value={labour.shifts}
                               onChange={event => setSelectedAssignmentLabours(previous => previous.map(item =>
                                 item.value === labour.value ? { ...item, shifts: event.target.value } : item
                               ))}
                               placeholder="e.g. 1.5"
+                              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                            />
+                          </label>
+                          <label className="text-xs font-medium text-gray-600">
+                            Remarks
+                            <input
+                              type="text"
+                              maxLength={255}
+                              value={labour.remarks}
+                              onChange={event => setSelectedAssignmentLabours(previous => previous.map(item =>
+                                item.value === labour.value ? { ...item, remarks: event.target.value } : item
+                              ))}
+                              placeholder="Required"
+                              required
                               className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                             />
                           </label>
@@ -1252,7 +1283,7 @@ const WorkAndMaterialEntry = () => {
                               type="number"
                               min="0.1"
                               max="99.9"
-                              step="0.1"
+                              step="any"
                               value={labourShiftInputs[labour.assignment_id] ?? ""}
                               disabled={!canEdit}
                               onChange={event => setLabourShiftInputs(previous => ({
@@ -1290,8 +1321,9 @@ const WorkAndMaterialEntry = () => {
                                 ...previous,
                                 [labour.assignment_id]: event.target.value
                               }))}
-                              placeholder="Optional"
+                              placeholder="Required"
                               className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
+                              required
                             />
                           </label>
                           <div className="text-sm sm:text-right">
@@ -1585,7 +1617,7 @@ const WorkAndMaterialEntry = () => {
                               type="number"
                               min="1"
                               max={remaining}
-                              step="1"
+                              step="any"
                               value={input.overall_qty || ""}
                               onChange={event => updateUsageInput(dispatch.id, "overall_qty", event.target.value)}
                               placeholder={`Quantity used (${dispatch.uom_name})`}
@@ -1598,6 +1630,7 @@ const WorkAndMaterialEntry = () => {
                               onChange={event => updateUsageInput(dispatch.id, "remarks", event.target.value)}
                               placeholder="Material usage remark (required)"
                               className="rounded-md border border-gray-300 px-3 py-2"
+                              required
                             />
                           </div>
                         )}

@@ -732,14 +732,19 @@ const MaterialUsage = () => {
 
     const [_, ackIdStr] = compositeKey.split('-');
     const ackId = parseInt(ackIdStr);
+    const remarks = (usageData.remarks || "").trim();
+    if (!remarks) {
+      toast.error("Remarks are required");
+      return;
+    }
 
     try {
       setSubmitting(true);
       const response = await axios.post(`${API_BASE_URL}/site-incharge/save-material-usage`, {
         material_ack_id: ackId,
         entry_date: selectedDate,
-        overall_qty: usageData.overall_qty !== "" ? parseInt(usageData.overall_qty) : null,
-        remarks: usageData.remarks || null,
+        overall_qty: usageData.overall_qty !== "" ? Number(usageData.overall_qty) : null,
+        remarks,
         created_by: userId
       });
       toast.success(response.data.message);
@@ -759,13 +764,18 @@ const MaterialUsage = () => {
       toast.error("User ID, Entry ID or data is missing.");
       return;
     }
+    const remarks = (usageData.remarks || "").trim();
+    if (!remarks) {
+      toast.error("Remarks are required");
+      return;
+    }
 
     try {
       setSubmitting(true);
       const response = await axios.put(`${API_BASE_URL}/site-incharge/update-material-usage-entry`, {
         entry_id: entryId,
-        overall_qty: usageData.overall_qty !== "" ? parseInt(usageData.overall_qty) : null,
-        remarks: usageData.remarks || null,
+        overall_qty: usageData.overall_qty !== "" ? Number(usageData.overall_qty) : null,
+        remarks,
         updated_by: userId,
       });
       toast.success(response.data.message);
@@ -977,6 +987,7 @@ const MaterialUsage = () => {
                                       onChange={(e) => handleInputChange(`edit-${entry.entry_id}`, 'overall_qty', e.target.value)}
                                       className="w-full p-1 border rounded text-xs"
                                       min="0"
+                                      step="any"
                                     />
                                   </div>
                                   <div>
@@ -987,6 +998,7 @@ const MaterialUsage = () => {
                                       value={usageInputs[`edit-${entry.entry_id}`]?.remarks || ""}
                                       onChange={(e) => handleInputChange(`edit-${entry.entry_id}`, 'remarks', e.target.value)}
                                       className="w-full p-1 border rounded text-xs"
+                                      required
                                     />
                                   </div>
                                 </div>
@@ -1054,6 +1066,7 @@ const MaterialUsage = () => {
                             disabled={(displayData.total_cumulative.overall_qty || 0) >= (ack.overall_quantity || 0)}
                             min="0"
                             max={(ack.overall_quantity || 0) - (displayData.total_cumulative.overall_qty || 0)}
+                            step="any"
                           />
                           <input
                             type="text"
@@ -1062,6 +1075,7 @@ const MaterialUsage = () => {
                             onChange={(e) => handleInputChange(compositeKey, 'remarks', e.target.value)}
                             className="flex-1 p-2 border rounded-lg text-sm"
                             disabled={(displayData.total_cumulative.overall_qty || 0) >= (ack.overall_quantity || 0)}
+                            required
                           />
                         </div>
                       </div>

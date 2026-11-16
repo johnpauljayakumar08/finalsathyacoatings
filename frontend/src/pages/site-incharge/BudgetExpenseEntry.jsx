@@ -947,6 +947,11 @@ const BudgetExpenseEntry = () => {
   const handleSaveOrUpdateExpense = async (budgetId) => {
     const inputData = expenseInputs[budgetId];
     if (!inputData) return;
+    const remarks = (inputData.remarks || "").trim();
+    if (!remarks) {
+      toast.error("Remarks are required");
+      return;
+    }
 
     const isEditing = editingEntryId[budgetId];
     let user_id;
@@ -964,7 +969,7 @@ const BudgetExpenseEntry = () => {
         actual_budget_id: budgetId,
         entry_date: selectedDate,
         actual_value: inputData.actual_value !== "" ? parseFloat(inputData.actual_value) : null,
-        remarks: inputData.remarks || null,
+        remarks,
       };
 
       let response;
@@ -1439,6 +1444,7 @@ const BudgetExpenseEntry = () => {
                           value={expenseInputs[budget.id]?.remarks || ""}
                           onChange={(e) => handleInputChange(budget.id, 'remarks', e.target.value)}
                           className="w-full p-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                          required
                         />
                       </div>
                     </div>

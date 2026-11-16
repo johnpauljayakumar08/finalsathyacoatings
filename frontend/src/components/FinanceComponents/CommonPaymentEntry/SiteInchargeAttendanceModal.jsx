@@ -104,20 +104,22 @@ const SiteInchargeAttendanceModal = ({ onClose, createdBy }) => {
   const saveEdit = async (id) => {
     const { shift, remarks } = attendances[id] || {};
     if (!shift?.trim()) return alert('Shift is required');
+    const requiredRemarks = remarks?.trim();
+    if (!requiredRemarks) return alert('Remarks are required');
 
     try {
       const res = await fetch(`${API_BASE_URL}/finance/siteincharge-attendance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          attendances: [{ siteincharge_assign_id: id, shift: shift.trim(), entry_date: selectedDate, remarks: remarks?.trim() || '' }],
+          attendances: [{ siteincharge_assign_id: id, shift: shift.trim(), entry_date: selectedDate, remarks: requiredRemarks }],
           created_by: createdBy
         })
       });
       const result = await res.json();
       if (result.status === 'success') {
         alert('Attendance saved!');
-        setExistingAttendances(prev => ({ ...prev, [id]: { shift: shift.trim(), remarks: remarks?.trim() || '' } }));
+        setExistingAttendances(prev => ({ ...prev, [id]: { shift: shift.trim(), remarks: requiredRemarks } }));
         setIsEditing(prev => ({ ...prev, [id]: false }));
       }
     } catch { alert('Failed to save'); }
@@ -230,7 +232,7 @@ const SiteInchargeAttendanceModal = ({ onClose, createdBy }) => {
                           <td className="px-6 py-4 text-sm text-gray-600">{new Date(item.to_date).toLocaleDateString('en-IN')}</td>
                           <td className="px-6 py-4">
                             {editing ? (
-                              <input type="text" value={att.shift} onChange={(e) => handleShiftChange(item.id, e.target.value)}
+                              <input type="number" min="0.1" max="99.9" step="0.1" value={att.shift} onChange={(e) => handleShiftChange(item.id, e.target.value)}
                                 className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2"
                                 style={{ borderColor: themeColors.border, '--tw-ring-color': themeColors.primary }} />
                             ) : (
@@ -240,6 +242,7 @@ const SiteInchargeAttendanceModal = ({ onClose, createdBy }) => {
                           <td className="px-6 py-4">
                             {editing ? (
                               <textarea value={att.remarks} onChange={(e) => handleRemarksChange(item.id, e.target.value)} rows={2}
+                                required
                                 className="w-full px-3 py-2 border rounded resize-none focus:outline-none focus:ring-2"
                                 style={{ borderColor: themeColors.border, '--tw-ring-color': themeColors.primary }} />
                             ) : (

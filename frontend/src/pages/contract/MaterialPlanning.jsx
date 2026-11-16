@@ -1022,9 +1022,9 @@ const MaterialPlanning = ({
       return { comp_a_qty: 0, comp_b_qty: 0, comp_c_qty: 0 };
     }
     return {
-      comp_a_qty: ((comp_a / total_parts) * quantity).toFixed(2),
-      comp_b_qty: ((comp_b / total_parts) * quantity).toFixed(2),
-      comp_c_qty: ((comp_c / total_parts) * quantity).toFixed(2),
+      comp_a_qty: ((comp_a / total_parts) * quantity).toFixed(3),
+      comp_b_qty: ((comp_b / total_parts) * quantity).toFixed(3),
+      comp_c_qty: ((comp_c / total_parts) * quantity).toFixed(3),
     };
   }, []);
 
@@ -1150,8 +1150,8 @@ const MaterialPlanning = ({
         validationErrors.push("UOM required");
       }
       const quantity = Number(editingAssignment.quantity);
-      if (!Number.isFinite(quantity) || quantity <= 0 || Math.abs(quantity * 100 - Math.round(quantity * 100)) > 1e-8) {
-        validationErrors.push("Positive quantity with up to 2 decimal places required");
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        validationErrors.push("Positive quantity required");
       }
       if (!editingAssignment.rate || isNaN(editingAssignment.rate) || parseFloat(editingAssignment.rate) < 0) {
         validationErrors.push("Non-negative rate required");
@@ -1376,8 +1376,8 @@ const MaterialPlanning = ({
           validationErrors.push(`Row ${index + 1}: UOM required`);
         }
         const quantity = Number(row.quantity);
-        if (!Number.isFinite(quantity) || quantity <= 0 || Math.abs(quantity * 100 - Math.round(quantity * 100)) > 1e-8) {
-          validationErrors.push(`Row ${index + 1}: Positive quantity with up to 2 decimal places required`);
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+          validationErrors.push(`Row ${index + 1}: Positive quantity required`);
         }
         if (!row.rate || isNaN(row.rate) || parseFloat(row.rate) < 0) {
           validationErrors.push(`Row ${index + 1}: Non-negative rate required`);
@@ -1716,8 +1716,8 @@ const MaterialPlanning = ({
                               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm disabled:bg-gray-100"
                               required
                               disabled={!isFormEnabled}
-                              min="0.01"
-                              step="0.01"
+                              min="0.001"
+                              step="any"
                             />
                           </div>
                           <div>
@@ -1880,8 +1880,8 @@ const MaterialPlanning = ({
                         value={editingAssignment.quantity}
                         onChange={handleModalChange}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                        min="0.01"
-                        step="0.01"
+                        min="0.001"
+                        step="any"
                       />
                     </div>
                   </div>

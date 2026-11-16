@@ -742,8 +742,8 @@ exports.saveMaterialAcknowledgement = async (req, res) => {
 
     const validateQuantity = (qty, field) => {
       if (qty === null || qty === undefined) return null;
-      const parsed = parseInt(qty);
-      if (isNaN(parsed) || parsed < 0) {
+      const parsed = Number(qty);
+      if (!Number.isFinite(parsed) || parsed < 0) {
         throw new Error(`${field} must be a non-negative number or null`);
       }
       return parsed;
@@ -751,8 +751,8 @@ exports.saveMaterialAcknowledgement = async (req, res) => {
 
     const validatedOverallQuantity = validateQuantity(overall_quantity, 'overall_quantity');
 
-    if (remarks && typeof remarks !== 'string') {
-      return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
+    if (typeof remarks !== 'string' || remarks.trim() === '') {
+      return res.status(400).json({ status: 'error', message: 'remarks is required and must be a non-empty string for each attendance entry' });
     }
 
     try {
@@ -858,8 +858,8 @@ exports.updateMaterialAcknowledgement = async (req, res) => {
     // Validate overall_quantity if provided
     const validateQuantity = (qty, field) => {
       if (qty === null || qty === undefined || qty === '') return null;
-      const parsed = parseInt(qty);
-      if (isNaN(parsed) || parsed < 0) {
+      const parsed = Number(qty);
+      if (!Number.isFinite(parsed) || parsed < 0) {
         throw new Error(`${field} must be a non-negative number or null`);
       }
       return parsed;
@@ -868,8 +868,8 @@ exports.updateMaterialAcknowledgement = async (req, res) => {
     const validatedOverallQuantity = validateQuantity(overall_quantity, 'overall_quantity');
 
     // Validate remarks if provided
-    if (remarks && typeof remarks !== 'string') {
-      return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
+    if (typeof remarks !== 'string' || remarks.trim() === '') {
+      return res.status(400).json({ status: 'error', message: 'remarks is required and must be a non-empty string' });
     }
 
     // Check if ack_id exists
@@ -1105,8 +1105,8 @@ exports.saveMaterialUsage = async (req, res) => {
     // Validate overall_qty if provided
     const validateQuantity = (qty, field) => {
       if (qty === null || qty === undefined) return null;
-      const parsed = parseInt(qty);
-      if (isNaN(parsed) || parsed < 0) {
+      const parsed = Number(qty);
+      if (!Number.isFinite(parsed) || parsed < 0) {
         throw new Error(`${field} must be a non-negative number or null`);
       }
       return parsed;
@@ -1115,8 +1115,8 @@ exports.saveMaterialUsage = async (req, res) => {
     const validatedOverallQty = validateQuantity(overall_qty, 'overall_qty');
 
     // Validate remarks if provided
-    if (remarks && typeof remarks !== 'string') {
-      return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
+    if (typeof remarks !== 'string' || remarks.trim() === '') {
+      return res.status(400).json({ status: 'error', message: 'remarks is required and must be a non-empty string' });
     }
 
     // Check database connection
@@ -1262,8 +1262,8 @@ exports.updateMaterialUsageEntry = async (req, res) => {
     // Validate overall_qty if provided
     const validateQuantity = (qty, field) => {
       if (qty === null || qty === undefined || qty === '') return null;
-      const parsed = parseInt(qty);
-      if (isNaN(parsed) || parsed < 0) {
+      const parsed = Number(qty);
+      if (!Number.isFinite(parsed) || parsed < 0) {
         throw new Error(`${field} must be a non-negative number or null`);
       }
       return parsed;
@@ -1272,8 +1272,8 @@ exports.updateMaterialUsageEntry = async (req, res) => {
     const validatedOverallQty = validateQuantity(overall_qty, 'overall_qty');
 
     // Validate remarks if provided
-    if (remarks && typeof remarks !== 'string') {
-      return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
+    if (typeof remarks !== 'string' || remarks.trim() === '') {
+      return res.status(400).json({ status: 'error', message: 'remarks is required and must be a non-empty string' });
     }
 
     // Check if entry_id exists
@@ -1661,8 +1661,8 @@ exports.saveLabourAttendance = async (req, res) => {
         console.log('Validation failed: shift must be a positive number with at most one decimal place');
         return res.status(400).json({ status: 'error', message: 'shift must be a positive number up to 99.9 with at most one decimal place' });
       }
-      if (remarks && typeof remarks !== 'string') {
-        return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
+      if (typeof remarks !== 'string' || remarks.trim() === '') {
+        return res.status(400).json({ status: 'error', message: 'remarks is required and must be a non-empty string' });
       }
       const parsedShiftCost = shift_cost === undefined || shift_cost === null || shift_cost === ""
         ? null
@@ -2384,8 +2384,8 @@ exports.saveBudgetExpense = async (req, res) => {
     }
 
     // Validate remarks if provided
-    if (remarks && typeof remarks !== 'string') {
-      return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
+    if (typeof remarks !== 'string' || remarks.trim() === '') {
+      return res.status(400).json({ status: 'error', message: 'remarks is required and must be a non-empty string' });
     }
 
     connection = await db.getConnection();
@@ -2565,8 +2565,8 @@ exports.updateBudgetExpenseEntry = async (req, res) => {
     }
 
     // Validate remarks if provided
-    if (remarks && typeof remarks !== 'string') {
-      return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
+    if (typeof remarks !== 'string' || remarks.trim() === '') {
+      return res.status(400).json({ status: 'error', message: 'remarks is required and must be a non-empty string' });
     }
 
     connection = await db.getConnection();
@@ -4870,8 +4870,8 @@ exports.adminUpdateMaterialAcknowledgement = async (req, res) => {
     // Validate overall_quantity if provided
     const validateQuantity = (qty, field) => {
       if (qty === null || qty === undefined || qty === '') return null;
-      const parsed = parseInt(qty);
-      if (isNaN(parsed) || parsed < 0) {
+      const parsed = Number(qty);
+      if (!Number.isFinite(parsed) || parsed < 0) {
         throw new Error(`${field} must be a non-negative number or null`);
       }
       return parsed;
@@ -4880,8 +4880,8 @@ exports.adminUpdateMaterialAcknowledgement = async (req, res) => {
     const validatedOverallQuantity = validateQuantity(overall_quantity, 'overall_quantity');
 
     // Validate remarks if provided
-    if (remarks && typeof remarks !== 'string') {
-      return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
+    if (typeof remarks !== 'string' || remarks.trim() === '') {
+      return res.status(400).json({ status: 'error', message: 'remarks is required and must be a non-empty string' });
     }
 
     // Check if ack_id exists
@@ -5013,8 +5013,8 @@ exports.adminUpdateMaterialUsageEntry = async (req, res) => {
     // Validate overall_qty if provided
     const validateQuantity = (qty, field) => {
       if (qty === null || qty === undefined || qty === '') return null;
-      const parsed = parseInt(qty);
-      if (isNaN(parsed) || parsed < 0) {
+      const parsed = Number(qty);
+      if (!Number.isFinite(parsed) || parsed < 0) {
         throw new Error(`${field} must be a non-negative number or null`);
       }
       return parsed;
@@ -5023,8 +5023,8 @@ exports.adminUpdateMaterialUsageEntry = async (req, res) => {
     const validatedOverallQty = validateQuantity(overall_qty, 'overall_qty');
 
     // Validate remarks if provided
-    if (remarks && typeof remarks !== 'string') {
-      return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
+    if (typeof remarks !== 'string' || remarks.trim() === '') {
+      return res.status(400).json({ status: 'error', message: 'remarks is required and must be a non-empty string' });
     }
 
     // Check if entry_id exists
@@ -5397,8 +5397,8 @@ exports.adminUpdateBudgetExpenseEntry = async (req, res) => {
     }
 
     // Validate remarks if provided
-    if (remarks && typeof remarks !== 'string') {
-      return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
+    if (typeof remarks !== 'string' || remarks.trim() === '') {
+      return res.status(400).json({ status: 'error', message: 'remarks is required and must be a non-empty string' });
     }
 
     // Check if entry_id exists
@@ -5595,8 +5595,8 @@ exports.adminSaveLabourAttendance = async (req, res) => {
         console.log('Validation failed: shift must be a positive number with at most one decimal place');
         return res.status(400).json({ status: 'error', message: 'shift must be a positive number up to 99.9 with at most one decimal place' });
       }
-      if (remarks && typeof remarks !== 'string') {
-        return res.status(400).json({ status: 'error', message: 'remarks must be a string' });
+      if (typeof remarks !== 'string' || remarks.trim() === '') {
+        return res.status(400).json({ status: 'error', message: 'remarks is required and must be a non-empty string for each attendance entry' });
       }
       const parsedShiftCost = shift_cost === undefined || shift_cost === null || shift_cost === ""
         ? null

@@ -887,7 +887,7 @@ const CreateBilledDebtors = ({ onClose, onSuccess }) => {
                   <td className="px-6 py-4 font-semibold">Quantity</td>
                   <td className="px-6 py-4">
                     <input type="number" name="quantity" value={formData.quantity} onChange={handleChange}
-                      className="px-3 py-2 border rounded-lg w-32" step="0.01" min="0" style={{ borderColor: themeColors.border }} />
+                      className="px-3 py-2 border rounded-lg w-32" step="0.001" min="0" style={{ borderColor: themeColors.border }} />
                   </td>
                 </tr>
 

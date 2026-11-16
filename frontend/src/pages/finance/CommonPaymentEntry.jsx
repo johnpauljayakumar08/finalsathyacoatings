@@ -240,9 +240,13 @@ const CommonPaymentEntry = () => {
     if (!selectedCategory || selectedCategory.isStatic) return;
 
     const { amount, payment_type_id, paymentLines, date, remarks } = paymentForm;
+    const requiredRemarks = remarks?.trim();
 
     if (!payment_type_id || !amount || parseFloat(amount) <= 0) {
       return alert("Payment Type and Amount are required");
+    }
+    if (!requiredRemarks) {
+      return alert("Remarks are required");
     }
 
     const mainAmount = parseFloat(amount);
@@ -258,7 +262,7 @@ const CommonPaymentEntry = () => {
         payment_type_id: parseInt(payment_type_id),
         date: date || null,
         amount: mainAmount,
-        remarks: remarks?.trim() || null,
+        remarks: requiredRemarks,
         created_by: createdBy || '1',
         paymentLines: paymentLines.filter(l => parseFloat(l.paid_receive_amount) > 0)
       };
@@ -489,7 +493,7 @@ const CommonPaymentEntry = () => {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
-              <textarea name="remarks" value={paymentForm.remarks} onChange={handlePaymentChange} rows={3} className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-teal-500" placeholder="Any additional notes..." />
+              <textarea name="remarks" value={paymentForm.remarks} onChange={handlePaymentChange} rows={3} className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-teal-500" placeholder="Any additional notes..." required />
             </div>
 
             <div className="flex justify-end gap-4 pt-6 border-t">

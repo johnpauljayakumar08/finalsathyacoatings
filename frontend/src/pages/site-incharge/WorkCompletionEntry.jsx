@@ -1213,6 +1213,7 @@ const WorkCompletionEntry = () => {
                                     onChange={(e) => handleEditInputChange(entry.entry_id, 'area_added', e.target.value)}
                                     className="w-full p-1 border rounded text-xs"
                                     min="0"
+                                    step="any"
                                   />
                                 </div>
                                 <div>
@@ -1223,6 +1224,7 @@ const WorkCompletionEntry = () => {
                                     value={editData[`edit-${entry.entry_id}`]?.remarks || ""}
                                     onChange={(e) => handleEditInputChange(entry.entry_id, 'remarks', e.target.value)}
                                     className="w-full p-1 border rounded text-xs"
+                                    required
                                   />
                                 </div>
                               </div>
@@ -1230,7 +1232,7 @@ const WorkCompletionEntry = () => {
                                 <button
                                   onClick={() => handleUpdateEntry(entry.entry_id, r.rec_id)}
                                   className="flex-1 bg-green-500 text-white px-2 py-1 rounded text-xs hover:bg-green-600 flex items-center justify-center"
-                                  disabled={submitting || !editData[`edit-${entry.entry_id}`]?.area_added || !editData[`edit-${entry.entry_id}`]?.remarks}
+                                  disabled={submitting || editData[`edit-${entry.entry_id}`]?.area_added === "" || !(editData[`edit-${entry.entry_id}`]?.remarks || "").trim()}
                                 >
                                   <Save size={10} className="mr-1" />
                                   Update
@@ -1287,6 +1289,7 @@ const WorkCompletionEntry = () => {
                         }
                         placeholder="Enter new work area"
                         className="flex-1 p-2 border rounded-lg text-sm"
+                        step="any"
                       />
                       <input
                         type="text"
@@ -1296,6 +1299,7 @@ const WorkCompletionEntry = () => {
                         }
                         placeholder="Remarks (required)"
                         className="flex-1 p-2 border rounded-lg text-sm"
+                        required
                       />
                       <button
                         onClick={() => handleSubmit(r.rec_id)}

@@ -540,7 +540,7 @@ const EntryModal = ({ isOpen, onClose, entry, onSave, creditorsClients, costCate
           </div>
           <div>
             <label className="block text-sm font-semibold mb-2">Quantity</label>
-            <input type="text" value={formData.qty} onChange={e => handleChange('qty', e.target.value)} className="w-full px-4 py-3 border rounded-lg" style={{ borderColor: themeColors.border }} />
+            <input type="number" min="0" step="any" value={formData.qty} onChange={e => handleChange('qty', e.target.value)} className="w-full px-4 py-3 border rounded-lg" style={{ borderColor: themeColors.border }} />
           </div>
           <div>
             <label className="block text-sm font-semibold mb-2">Rate</label>

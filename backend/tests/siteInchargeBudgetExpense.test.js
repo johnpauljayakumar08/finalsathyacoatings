@@ -77,6 +77,7 @@ test('saving an over-budget expense preserves the allocation and reports the ove
         quantity: 1,
         rate: 30,
         actual_value: 30,
+        remarks: 'Travel expense',
         created_by: 7
       }
     }, response);
@@ -147,6 +148,7 @@ test('editing an over-budget expense preserves the allocation and reports the ov
         quantity: 1,
         rate: 30,
         actual_value: 30,
+        remarks: 'Updated travel expense',
         updated_by: 7
       }
     }, response);
@@ -221,6 +223,7 @@ test('admin edits can exceed the allocation without changing it', async () => {
         quantity: 1,
         rate: 30,
         actual_value: 30,
+        remarks: 'Admin update',
         updated_by: 7
       }
     }, response);

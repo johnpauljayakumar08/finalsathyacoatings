@@ -323,8 +323,12 @@ const handleAdminUpdate = async (type, updatedData) => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    if (typeof formData.remarks !== 'string' || !formData.remarks.trim()) {
+      alert('Remarks are required');
+      return;
+    }
     if (onSave) {
-      onSave(type, formData);
+      onSave(type, { ...formData, remarks: formData.remarks.trim() });
     }
   };
 
@@ -394,6 +398,7 @@ const handleAdminUpdate = async (type, updatedData) => {
               </label>
               <input
                 type={field.type}
+                step={field.type === "number" ? "any" : undefined}
                 value={formData[field.key] || ""}
                 onChange={(e) => handleChange(field.key, e.target.value)}
                 className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"

@@ -619,6 +619,11 @@ const ViewCreditors = () => {
 
   const handleEditSubmit = async (e) => {
     e.preventDefault();
+    const remarks = (editFormData.remarks || '').trim();
+    if (!remarks) {
+      alert('Remarks are required');
+      return;
+    }
 
     if (!currentUser) {
       alert('User not identified. Please reload the page.');
@@ -629,6 +634,7 @@ const ViewCreditors = () => {
     try {
       await axios.put(`${API_BASE_URL}/finance/update-creditors`, {
         ...editFormData,
+        remarks,
         is_gst: editCreditorType === 'gst' ? 1 : 0,
         updated_by: currentUser  // ← Auto-sent from URL
       });
@@ -883,7 +889,8 @@ const ViewCreditors = () => {
                       {field.includes('date') ? <Calendar size={16} /> : field.includes('amount') || field.includes('paid') ? <DollarSign size={16} /> : field.includes('qty') ? <Hash size={16} /> : <Package size={16} />}
                       {field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                     </label>
-                    <input type={field.includes('date') ? 'date' : 'text'} name={field} value={editFormData[field] || ''} onChange={handleEditInputChange}
+                    <input type={field.includes('date') ? 'date' : field === 'qty' ? 'number' : 'text'} name={field} value={editFormData[field] || ''} onChange={handleEditInputChange}
+                      min={field === 'qty' ? '0' : undefined} step={field === 'qty' ? 'any' : undefined}
                       className="w-full px-4 py-3 rounded-lg border bg-white text-sm transition-all focus:outline-none focus:ring-2"
                       style={{ borderColor: themeColors.border, '--tw-ring-color': themeColors.primary }} />
                   </div>
@@ -896,7 +903,7 @@ const ViewCreditors = () => {
                     <div><label className="text-sm font-semibold mb-2 block flex items-center gap-2" style={{ color: themeColors.textPrimary }}><FileText size={16} /> Invoice Number</label><input type="text" name="inv_number" value={editFormData.inv_number} onChange={handleEditInputChange} className="w-full px-4 py-3 rounded-lg border bg-white text-sm transition-all focus:outline-none focus:ring-2" style={{ borderColor: themeColors.border, '--tw-ring-color': themeColors.primary }} /></div>
                     <div className="lg:col-span-2"><label className="text-sm font-semibold mb-2 block flex items-center gap-2" style={{ color: themeColors.textPrimary }}><Calendar size={16} /> Bill Date</label><input type="date" name="bill_date" value={editFormData.bill_date} onChange={handleEditInputChange} className="w-full px-4 py-3 rounded-lg border bg-white text-sm transition-all focus:outline-none focus:ring-2" style={{ borderColor: themeColors.border, '--tw-ring-color': themeColors.primary }} /></div>
                     <div className="lg:col-span-2"><label className="text-sm font-semibold mb-2 block flex items-center gap-2" style={{ color: themeColors.textPrimary }}><Clock size={16} /> Due Date</label><input type="date" name="due_date" value={editFormData.due_date} onChange={handleEditInputChange} className="w-full px-4 py-3 rounded-lg border bg-white text-sm transition-all focus:outline-none focus:ring-2" style={{ borderColor: themeColors.border, '--tw-ring-color': themeColors.primary }} /></div>
-                    <div className="lg:col-span-4"><label className="text-sm font-semibold mb-2 block flex items-center gap-2" style={{ color: themeColors.textPrimary }}><MessageSquare size={16} /> Remarks</label><textarea name="remarks" value={editFormData.remarks} onChange={handleEditInputChange} rows={3} className="w-full px-4 py-3 rounded-lg border bg-white text-sm transition-all focus:outline-none focus:ring-2 resize-none" style={{ borderColor: themeColors.border, '--tw-ring-color': themeColors.primary }} /></div>
+                    <div className="lg:col-span-4"><label className="text-sm font-semibold mb-2 block flex items-center gap-2" style={{ color: themeColors.textPrimary }}><MessageSquare size={16} /> Remarks *</label><textarea name="remarks" value={editFormData.remarks} onChange={handleEditInputChange} rows={3} required className="w-full px-4 py-3 rounded-lg border bg-white text-sm transition-all focus:outline-none focus:ring-2 resize-none" style={{ borderColor: themeColors.border, '--tw-ring-color': themeColors.primary }} /></div>
                   </>
                 )}
 

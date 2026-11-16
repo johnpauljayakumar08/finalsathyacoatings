@@ -132,12 +132,14 @@ const Bank = () => {
     if (addedAmount === 0 && editForm.bank_name.trim() === editingBank.bank_name.trim()) {
       return alert('No changes detected');
     }
+    const remarks = editForm.remarks.trim();
+    if (!remarks) return alert('Remarks are required');
 
     try {
       await axios.put(`${API_BASE_URL}/finance/update-bank-master`, {
         bank_name: editForm.bank_name.trim(),
         opening_balance: addedAmount,
-        remarks: editForm.remarks.trim() || `Added ₹${addedAmount.toFixed(2)} to opening balance`,
+        remarks,
         updated_by: userId
       }, {
         params: { id: editingBank.id },
@@ -351,6 +353,7 @@ const Bank = () => {
                     <textarea
                       value={editForm.remarks}
                       onChange={(e) => setEditForm(prev => ({ ...prev, remarks: e.target.value }))}
+                      required
                       className="w-full px-4 py-3 border-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
                       style={{ borderColor: '#fca5a5' }}
                       rows={4}

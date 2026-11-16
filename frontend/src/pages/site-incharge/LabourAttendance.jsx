@@ -198,10 +198,14 @@ const LabourAttendance = () => {
 
   const handleSaveRow = async (labour) => {
     const parsedShift = parseFloat(shifts[labour.assignment_id] || labour.shift || 0);
-    const currentRemarks = remarks[labour.assignment_id] || labour.remarks || '';
+    const currentRemarks = (remarks[labour.assignment_id] ?? labour.remarks ?? '').trim();
 
     if (parsedShift <= 0) {
       toast.error("Shift must be a positive number");
+      return;
+    }
+    if (!currentRemarks) {
+      toast.error("Remarks are required");
       return;
     }
 
@@ -209,7 +213,7 @@ const LabourAttendance = () => {
       labour_assignment_id: labour.assignment_id,
       entry_date: selectedDate,
       shift: parsedShift,
-      remarks: currentRemarks || null,
+      remarks: currentRemarks,
       attendance_id: labour.attendance_id // Include for update
     }];
 
@@ -267,22 +271,32 @@ const LabourAttendance = () => {
     }
 
     const attendanceData = [];
+    let missingRemarksFor = null;
 
     assignedLabours.forEach(labour => {
       if (!labour.attendance_id) { // Only new rows
         const parsedShift = parseFloat(shifts[labour.assignment_id] || 0);
-        const currentRemarks = remarks[labour.assignment_id] || '';
+        const currentRemarks = (remarks[labour.assignment_id] || '').trim();
 
         if (parsedShift > 0) {
+          if (!currentRemarks) {
+            missingRemarksFor = labour.full_name;
+            return;
+          }
           attendanceData.push({
             labour_assignment_id: labour.assignment_id,
             entry_date: selectedDate,
             shift: parsedShift,
-            remarks: currentRemarks || null
+            remarks: currentRemarks
           });
         }
       }
     });
+
+    if (missingRemarksFor) {
+      toast.error(`Remarks are required for ${missingRemarksFor}`);
+      return;
+    }
 
     if (attendanceData.length === 0) {
       toast.error("Please enter a positive shift for at least one new labour");
@@ -469,7 +483,7 @@ const LabourAttendance = () => {
                         <label className="text-xs font-medium text-gray-600">Shift</label>
                         <input
                           type="number"
-                          step="0.5"
+                          step="any"
                           min="0"
                           value={currentShift}
                           onChange={(e) => handleShiftChange(labour.assignment_id, e.target.value)}
@@ -488,6 +502,7 @@ const LabourAttendance = () => {
                           maxLength={255}
                           className="w-full p-1 border rounded text-sm"
                           disabled={hasAttendance && !isEditing}
+                          required={isEditing || !hasAttendance}
                         />
                       </div>
                     </div>

@@ -195,7 +195,8 @@ const MaterialAcknowledgement = () => {
     const dispatch = dispatchData.find(d => d.id === parseInt(dispatchId));
     if (!dispatch) return false;
     const totalDispatched = getTotalDispatched(dispatch);
-    const overallQuantity = parseInt(overallQuantityStr, 10);
+    const overallQuantity = Number(overallQuantityStr);
+    if (!Number.isFinite(overallQuantity)) return false;
     return overallQuantity <= totalDispatched && overallQuantity >= 0;
   };
 
@@ -207,6 +208,11 @@ const MaterialAcknowledgement = () => {
     }
 
     const overallQuantityStr = ackData.overall_quantity;
+    const remarks = (ackData.remarks || "").trim();
+    if (!remarks) {
+      toast.error("Remarks are required");
+      return;
+    }
     if (overallQuantityStr && !validateQuantity(dispatchId, overallQuantityStr)) {
       toast.error("Entered quantity cannot be greater than the Total Dispatched.");
       return;
@@ -217,8 +223,8 @@ const MaterialAcknowledgement = () => {
       
       const response = await axios.post(`${API_BASE_URL}/site-incharge/acknowledge-material`, {
         material_dispatch_id: parseInt(dispatchId),
-        overall_quantity: overallQuantityStr !== "" ? parseInt(overallQuantityStr, 10) : null,
-        remarks: ackData.remarks || null,
+        overall_quantity: overallQuantityStr !== "" ? Number(overallQuantityStr) : null,
+        remarks,
         created_by: userId,
       });
       
@@ -255,6 +261,11 @@ const MaterialAcknowledgement = () => {
     }
 
     const overallQuantityStr = ackData.overall_quantity;
+    const remarks = (ackData.remarks || "").trim();
+    if (!remarks) {
+      toast.error("Remarks are required");
+      return;
+    }
     if (overallQuantityStr && !validateQuantity(dispatchId, overallQuantityStr)) {
       toast.error("Entered quantity cannot be greater than the Total Dispatched.");
       return;
@@ -265,8 +276,8 @@ const MaterialAcknowledgement = () => {
       
       const response = await axios.put(`${API_BASE_URL}/site-incharge/update-acknowledgement`, {
         ack_id: parseInt(ackId),
-        overall_quantity: overallQuantityStr !== "" ? parseInt(overallQuantityStr, 10) : null,
-        remarks: ackData.remarks || null,
+        overall_quantity: overallQuantityStr !== "" ? Number(overallQuantityStr) : null,
+        remarks,
         updated_by: userId,
       });
       
@@ -440,7 +451,7 @@ const MaterialAcknowledgement = () => {
             const ackId = ack?.id;
             const currentAckQuantity = acknowledgements[dispatch.id]?.overall_quantity || "";
             const isQuantityValid = !currentAckQuantity || validateQuantity(dispatch.id, currentAckQuantity);
-            const hasValidInput = currentAckQuantity || acknowledgements[dispatch.id]?.remarks;
+            const hasValidInput = currentAckQuantity && (acknowledgements[dispatch.id]?.remarks || "").trim();
             
             return (
               <div key={dispatch.id} className="border rounded-lg p-4 bg-white shadow-md">
@@ -490,6 +501,7 @@ const MaterialAcknowledgement = () => {
                               }`}
                               min="0"
                               max={totalDispatched}
+                              step="any"
                             />
                             {!isQuantityValid && (
                               <p className="text-xs text-red-600 mt-1">Quantity cannot exceed {totalDispatched}</p>
@@ -503,6 +515,7 @@ const MaterialAcknowledgement = () => {
                               value={acknowledgements[dispatch.id]?.remarks || ""}
                               onChange={(e) => handleInputChange(dispatch.id, 'remarks', e.target.value)}
                               className="w-full p-2 border rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                              required
                             />
                           </div>
                         </div>
@@ -557,6 +570,7 @@ const MaterialAcknowledgement = () => {
                             }`}
                             min="0"
                             max={totalDispatched}
+                            step="any"
                           />
                           {!isQuantityValid && (
                             <p className="text-xs text-red-600 mt-1">Quantity cannot exceed {totalDispatched}</p>
@@ -570,6 +584,7 @@ const MaterialAcknowledgement = () => {
                             value={acknowledgements[dispatch.id]?.remarks || ""}
                             onChange={(e) => handleInputChange(dispatch.id, 'remarks', e.target.value)}
                             className="w-full p-2 border rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                            required
                           />
                         </div>
                       </div>

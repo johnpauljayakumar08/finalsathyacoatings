@@ -29,19 +29,29 @@ exports.assignMaterial = async (req, res) => {
       });
     }
 
-    const values = assignments.map(assignment => [
+    const values = [];
+    for (const [index, assignment] of assignments.entries()) {
+      const quantity = Number(assignment?.quantity);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        return res.status(400).json({
+          status: 'error',
+          message: `Assignment ${index + 1}: quantity must be a positive number`,
+        });
+      }
+      values.push([
       assignment.pd_id,
       assignment.site_id,
       assignment.item_id,
       assignment.uom_id,
-      assignment.quantity,
+      quantity,
       assignment.production_cost_per_uom,
       assignment.production_cost,
       assignment.supply_cost_per_uom,
       assignment.supply_cost,
       assignment.created_by || null,
       assignment.target_date || null // Include target_date
-    ]);
+      ]);
+    }
 
     const query = `
       INSERT INTO supply_material_assign 

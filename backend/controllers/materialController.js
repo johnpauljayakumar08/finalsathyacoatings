@@ -1729,10 +1729,9 @@ exports.assignMaterial = async (req, res) => {
       if (
         typeof quantity !== "number" ||
         !Number.isFinite(quantity) ||
-        quantity <= 0 ||
-        Math.abs(quantity * 100 - Math.round(quantity * 100)) > 1e-8
+        quantity <= 0
       ) {
-        validationErrors.push(`Assignment ${index + 1}: quantity must be positive with up to 2 decimal places`);
+        validationErrors.push(`Assignment ${index + 1}: quantity must be a positive number`);
       }
       if (!desc_id || typeof desc_id !== "string" || desc_id.trim() === "") {
         validationErrors.push(`Assignment ${index + 1}: desc_id is required and must be a non-empty string`);
@@ -2121,14 +2120,14 @@ exports.addMaterialDispatch = async (req, res) => {
         if (!Number.isFinite(dispatch_qty) || dispatch_qty <= 0) {
           validationErrors.push(`Assignment for material_assign_id ${material_assign_id}: dispatch_qty is required and must be a positive number`);
         }
-        if (comp_a_qty !== null && (!Number.isInteger(comp_a_qty) || comp_a_qty < 0)) {
-          validationErrors.push(`Assignment for material_assign_id ${material_assign_id}: comp_a_qty must be a non-negative integer or null`);
+        if (comp_a_qty !== null && (!Number.isFinite(Number(comp_a_qty)) || Number(comp_a_qty) < 0)) {
+          validationErrors.push(`Assignment for material_assign_id ${material_assign_id}: comp_a_qty must be a non-negative number or null`);
         }
-        if (comp_b_qty !== null && (!Number.isInteger(comp_b_qty) || comp_b_qty < 0)) {
-          validationErrors.push(`Assignment for material_assign_id ${material_assign_id}: comp_b_qty must be a non-negative integer or null`);
+        if (comp_b_qty !== null && (!Number.isFinite(Number(comp_b_qty)) || Number(comp_b_qty) < 0)) {
+          validationErrors.push(`Assignment for material_assign_id ${material_assign_id}: comp_b_qty must be a non-negative number or null`);
         }
-        if (comp_c_qty !== null && (!Number.isInteger(comp_c_qty) || comp_c_qty < 0)) {
-          validationErrors.push(`Assignment for material_assign_id ${material_assign_id}: comp_c_qty must be a non-negative integer or null`);
+        if (comp_c_qty !== null && (!Number.isFinite(Number(comp_c_qty)) || Number(comp_c_qty) < 0)) {
+          validationErrors.push(`Assignment for material_assign_id ${material_assign_id}: comp_c_qty must be a non-negative number or null`);
         }
         if (comp_a_remarks !== null && typeof comp_a_remarks !== 'string') {
           validationErrors.push(`Assignment for material_assign_id ${material_assign_id}: comp_a_remarks must be a string or null`);
@@ -2142,8 +2141,8 @@ exports.addMaterialDispatch = async (req, res) => {
 
         const componentQuantities = [comp_a_qty, comp_b_qty, comp_c_qty];
         const hasComponentBreakdown = componentQuantities.some((quantity) => quantity !== null);
-        const componentTotal = componentQuantities.reduce((sum, quantity) => sum + (quantity || 0), 0);
-        if (hasComponentBreakdown && componentTotal !== dispatch_qty) {
+        const componentTotal = componentQuantities.reduce((sum, quantity) => sum + (Number(quantity) || 0), 0);
+        if (hasComponentBreakdown && Math.abs(componentTotal - Number(dispatch_qty)) > 0.001) {
           validationErrors.push(`Assignment for material_assign_id ${material_assign_id}: Component quantities must add up to dispatch_qty`);
         }
 
@@ -2998,10 +2997,9 @@ exports.updateMaterialAssignment = async (req, res) => {
     if (
       typeof quantity !== "number" ||
       !Number.isFinite(quantity) ||
-      quantity <= 0 ||
-      Math.abs(quantity * 100 - Math.round(quantity * 100)) > 1e-8
+      quantity <= 0
     ) {
-      validationErrors.push("Quantity must be positive with up to 2 decimal places");
+      validationErrors.push("Quantity must be a positive number");
     }
     const parsedRate = parseFloat(rate);
     if (isNaN(parsedRate) || parsedRate < 0) {

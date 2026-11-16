@@ -267,7 +267,7 @@ const ViewBilledDebtors = ({ createdBy }) => {
             </div>
             <div>
               <label className="block text-sm font-semibold mb-2">Quantity</label>
-              <input type="number" step="0.01" value={editItem.quantity || ''} onChange={e => setEditItem(prev => ({ ...prev, quantity: e.target.value }))} className="w-full px-4 py-2 border rounded-lg" style={{ borderColor: themeColors.border }} />
+              <input type="number" step="0.001" value={editItem.quantity || ''} onChange={e => setEditItem(prev => ({ ...prev, quantity: e.target.value }))} className="w-full px-4 py-2 border rounded-lg" style={{ borderColor: themeColors.border }} />
             </div>
             <div>
               <label className="block text-sm font-semibold mb-2">UOM</label>

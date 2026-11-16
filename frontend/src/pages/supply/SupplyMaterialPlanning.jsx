@@ -275,12 +275,12 @@ const SupplyMaterialPlanning = () => {
 
     // Auto-calculate totals when quantity or per_uom changes
     if (name === "quantity" || name === "production_cost_per_uom") {
-      const qty = parseInt(mat.quantity) || 0;
+      const qty = parseFloat(mat.quantity) || 0;
       const perUom = parseFloat(mat.production_cost_per_uom) || 0;
       mat.production_cost = (qty * perUom).toFixed(2);
     }
     if (name === "quantity" || name === "supply_cost_per_uom") {
-      const qty = parseInt(mat.quantity) || 0;
+      const qty = parseFloat(mat.quantity) || 0;
       const perUom = parseFloat(mat.supply_cost_per_uom) || 0;
       mat.supply_cost = (qty * perUom).toFixed(2);
     }
@@ -436,8 +436,8 @@ const SupplyMaterialPlanning = () => {
         }
         if (!row.quantity) {
           validationErrors.push(`Row ${index + 1}: Quantity is required`);
-        } else if (isNaN(row.quantity) || parseInt(row.quantity) <= 0) {
-          validationErrors.push(`Row ${index + 1}: Quantity must be a positive integer`);
+        } else if (!Number.isFinite(Number(row.quantity)) || Number(row.quantity) <= 0) {
+          validationErrors.push(`Row ${index + 1}: Quantity must be a positive number`);
         }
         if (!row.production_cost_per_uom) {
           validationErrors.push(`Row ${index + 1}: Production Cost per UOM is required`);
@@ -466,7 +466,7 @@ const SupplyMaterialPlanning = () => {
         site_id: selectedSite.value,
         item_id: row.item_id,
         uom_id: parseInt(row.uom_id),
-        quantity: parseInt(row.quantity),
+        quantity: parseFloat(row.quantity),
         production_cost_per_uom: parseFloat(row.production_cost_per_uom),
         production_cost: parseFloat(row.production_cost),
         supply_cost_per_uom: parseFloat(row.supply_cost_per_uom),
@@ -723,12 +723,13 @@ const SupplyMaterialPlanning = () => {
                             <input
                               type="number"
                               name="quantity"
+                              step="any"
                               value={mat.quantity}
                               onChange={(e) => handleMaterialChange(matIndex, e)}
                               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm disabled:bg-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                               required
                               disabled={!isFormEnabled}
-                              min="1"
+                              min="0.001"
                             />
                           </div>
                         </div>
