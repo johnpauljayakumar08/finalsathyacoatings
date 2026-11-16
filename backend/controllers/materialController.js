@@ -560,7 +560,7 @@ exports.addEmployee = async (req, res) => {
     // Check for missing required fields
     if (
       !emp_id || !full_name || !gender_id || !date_of_birth || !date_of_joining ||
-      !status_id || !company || !dept_id || !emp_type_id || !designation_id ||
+      !status_id || !company || !emp_type_id || !designation_id ||
       !mobile || !loginEmail || !current_address || !permanent_address ||
       !approved_salary || !created_by || !user_password || !aadhaar_number ||
       !esic_number || !pf_number || !bank_account_number ||
@@ -688,14 +688,6 @@ exports.addEmployee = async (req, res) => {
       });
     }
 
-    const [department] = await db.query('SELECT id FROM emp_department WHERE id = ?', [dept_id]);
-    if (department.length === 0) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Invalid dept_id: department does not exist',
-      });
-    }
-
     const [empType] = await db.query('SELECT id, type FROM employment_type WHERE id = ?', [emp_type_id]);
     if (empType.length === 0) {
       return res.status(400).json({
@@ -765,7 +757,7 @@ exports.addEmployee = async (req, res) => {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
         [
           emp_id, full_name, gender_id, date_of_birth, date_of_joining, status_id,
-          company, dept_id, emp_type_id, designation_id, branch,
+          company, dept_id || null, emp_type_id, designation_id, branch,
           mobile, loginEmail, current_address, permanent_address,
           esic_number, pf_number, parseFloat(approved_salary), created_by,
           aadhaar_number, bank_account_number, bank_account_holder_name,
@@ -817,7 +809,7 @@ exports.addEmployee = async (req, res) => {
     if (error.code === 'ER_NO_REFERENCED_ROW_2') {
       return res.status(400).json({
         status: 'error',
-        message: 'Invalid foreign key: one of gender_id, dept_id, emp_type_id, designation_id, or status_id does not exist',
+        message: 'Invalid foreign key: one of gender_id, emp_type_id, designation_id, or status_id does not exist',
       });
     }
     res.status(500).json({

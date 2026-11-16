@@ -262,7 +262,6 @@ import DemEntries from './components/FinanceComponents/New/DEM';
 // === RESOURCE PAGES ===
 import EmployeeDetails from './pages/contract/EmployeeDetails';
 import ConsumablesPage from './pages/resource/ConsumablesPage';
-import LabourTeamMapping from './pages/resource/LabourTeamMapping';
 
 const Placeholder = ({ title }) => (
   <div className="p-4">
@@ -381,7 +380,6 @@ const App = () => {
           {/* Resources */}
           <Route path="/:rolePrefix/resource/employee-details/:encodedUserId" element={<ProtectedRoute roles={['admin', 'superadmin']}><EmployeeDetails /></ProtectedRoute>} />
           <Route path="/:rolePrefix/resource/consumables/:encodedUserId" element={<ProtectedRoute roles={['admin', 'superadmin']}><ConsumablesPage /></ProtectedRoute>} />
-          <Route path="/:rolePrefix/resource/labour-team-mapping/:encodedUserId" element={<ProtectedRoute roles={['admin', 'superadmin']}><LabourTeamMapping /></ProtectedRoute>} />
 
           {/* Site Incharge */}
           <Route path="/site-incharge/:encodedUserId" element={<ProtectedRoute roles={['site-incharge', 'superadmin']}><Placeholder title="Site Incharge Home" /></ProtectedRoute>} />

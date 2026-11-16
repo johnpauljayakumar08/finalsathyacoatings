@@ -239,7 +239,6 @@ import {
   PanelsTopLeft,
   IdCardLanyard,
   Package2,
-  HardHat,
   ChevronDown,
   PanelLeftClose,
   PanelLeftOpen,
@@ -445,9 +444,6 @@ const getSidebarConfig = (role, encodedUserId) => {
         icon: SwatchBook,
         items: [
           { label: 'Employee Details', to: `/${prefix}/resource/employee-details/${encodedUserId}`, icon: IdCardLanyard },
-          ...(role === 'admin' || role === 'superadmin'
-            ? [{ label: 'Labour Head Mapping', to: `/${prefix}/resource/labour-team-mapping/${encodedUserId}`, icon: HardHat }]
-            : []),
           { label: 'Consumables', to: `/${prefix}/resource/consumables/${encodedUserId}`, icon: Package2 },
         ],
       },

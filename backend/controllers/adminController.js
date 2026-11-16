@@ -1841,124 +1841,12 @@ exports.importEmployees = async (req, res) => {
 exports.getLabourEmployees = async (req, res) => {
   try {
     const [labourEmployees] = await db.query(
-      "SELECT id, full_name, approved_salary FROM labour WHERE status_id = 1"
+      "SELECT id, full_name, approved_salary, team_name FROM labour WHERE status_id = 1"
     );
     res.status(200).json({ success: true, data: labourEmployees });
   } catch (error) {
     console.error("Error fetching labour employees:", error);
     res.status(500).json({ success: false, message: "Failed to fetch labour employees" });
-  }
-};
-
-exports.getLabourTeamMappings = async (req, res) => {
-  try {
-    const [[labourEmployees], [mappings]] = await Promise.all([
-      db.query(
-        "SELECT id, full_name, approved_salary FROM labour WHERE status_id = 1 ORDER BY full_name"
-      ),
-      db.query(
-        `SELECT team.head_labour_id, team.member_labour_id,
-                head.full_name AS head_name, member.full_name AS member_name
-         FROM labour_team_members team
-         JOIN labour head ON head.id = team.head_labour_id
-         JOIN labour member ON member.id = team.member_labour_id
-         WHERE head.status_id = 1 AND member.status_id = 1
-         ORDER BY head.full_name, member.full_name`
-      )
-    ]);
-    res.status(200).json({ success: true, data: { labourEmployees, mappings } });
-  } catch (error) {
-    console.error("Error fetching labour team mappings:", error);
-    res.status(500).json({ success: false, message: "Failed to fetch labour team mappings" });
-  }
-};
-
-exports.saveLabourTeamMapping = async (req, res) => {
-  const headId = Number(req.body.head_labour_id);
-  const memberIds = req.body.member_labour_ids;
-  if (!Number.isInteger(headId) || headId <= 0 || !Array.isArray(memberIds)) {
-    return res.status(400).json({
-      success: false,
-      message: "A valid labour head and a list of team members are required"
-    });
-  }
-  const parsedMemberIds = memberIds.map(Number);
-  if (
-    parsedMemberIds.some(id => !Number.isInteger(id) || id <= 0) ||
-    parsedMemberIds.includes(headId) ||
-    new Set(parsedMemberIds).size !== parsedMemberIds.length
-  ) {
-    return res.status(400).json({
-      success: false,
-      message: "Team members must be unique valid labourers and cannot include the selected head"
-    });
-  }
-
-  let connection;
-  try {
-    const labourIds = [headId, ...parsedMemberIds];
-    const [activeLabours] = await db.query(
-      "SELECT id FROM labour WHERE status_id = 1 AND id IN (?)",
-      [labourIds]
-    );
-    if (activeLabours.length !== labourIds.length) {
-      return res.status(400).json({
-        success: false,
-        message: "The selected head or one or more team members are unavailable"
-      });
-    }
-
-    connection = await db.getConnection();
-    await connection.beginTransaction();
-
-    const [headAssignments] = await connection.query(
-      "SELECT head_labour_id FROM labour_team_members WHERE member_labour_id = ?",
-      [headId]
-    );
-    if (headAssignments.length) {
-      await connection.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "A labourer who is already a team member cannot also be assigned as a head"
-      });
-    }
-
-    if (parsedMemberIds.length) {
-      const [membersWithTeams] = await connection.query(
-        "SELECT head_labour_id FROM labour_team_members WHERE head_labour_id IN (?)",
-        [parsedMemberIds]
-      );
-      const [membersAssignedElsewhere] = await connection.query(
-        "SELECT member_labour_id FROM labour_team_members WHERE member_labour_id IN (?) AND head_labour_id <> ?",
-        [parsedMemberIds, headId]
-      );
-      if (membersWithTeams.length || membersAssignedElsewhere.length) {
-        await connection.rollback();
-        return res.status(400).json({
-          success: false,
-          message: "A team member cannot also be a head or belong to another head"
-        });
-      }
-    }
-
-    await connection.query(
-      "DELETE FROM labour_team_members WHERE head_labour_id = ?",
-      [headId]
-    );
-    if (parsedMemberIds.length) {
-      await connection.query(
-        "INSERT INTO labour_team_members (head_labour_id, member_labour_id) VALUES ?",
-        [parsedMemberIds.map(memberId => [headId, memberId])]
-      );
-    }
-    await connection.commit();
-    res.status(200).json({ success: true, message: "Labour team mapping saved successfully" });
-  } catch (error) {
-    if (connection) await connection.rollback();
-    console.error("Error saving labour team mapping:", error);
-    res.status(500).json({ success: false, message: "Failed to save labour team mapping" });
-  } finally {
-    if (connection) connection.release();
   }
 };
 

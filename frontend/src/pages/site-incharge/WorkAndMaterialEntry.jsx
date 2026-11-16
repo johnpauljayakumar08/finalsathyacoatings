@@ -35,6 +35,7 @@ const WorkAndMaterialEntry = () => {
   const [labourRateInputs, setLabourRateInputs] = useState({});
   const [labourRemarksInputs, setLabourRemarksInputs] = useState({});
   const [labourRoster, setLabourRoster] = useState([]);
+  const [selectedLabourTeam, setSelectedLabourTeam] = useState(null);
   const [selectedAssignmentLabours, setSelectedAssignmentLabours] = useState([]);
   const [budgetHeads, setBudgetHeads] = useState([]);
   const [budgetExpenseData, setBudgetExpenseData] = useState({});
@@ -97,19 +98,19 @@ const WorkAndMaterialEntry = () => {
     value: description.desc_id,
     label: description.desc_name
   }));
-  const labourRosterOptions = useMemo(() => {
-    const groups = new Map();
-    labourRoster.forEach(labour => {
-      const groupLabel = labour.team_name || "Other labourers";
-      if (!groups.has(groupLabel)) groups.set(groupLabel, []);
-      groups.get(groupLabel).push({
-        value: labour.id,
-        label: labour.team_role === "head" ? `${labour.full_name} (Head)` : labour.full_name,
-        approved_salary: labour.approved_salary
-      });
-    });
-    return Array.from(groups, ([label, options]) => ({ label, options }));
-  }, [labourRoster]);
+  const labourTeamOptions = useMemo(() => [...new Set(
+    labourRoster.map(labour => labour.team_name || "Other labourers")
+  )].sort((left, right) => left.localeCompare(right)).map(teamName => ({
+    value: teamName,
+    label: teamName
+  })), [labourRoster]);
+  const labourRosterOptions = useMemo(() => labourRoster
+    .filter(labour => (labour.team_name || "Other labourers") === selectedLabourTeam?.value)
+    .map(labour => ({
+      value: labour.id,
+      label: labour.full_name,
+      approved_salary: labour.approved_salary
+    })), [labourRoster, selectedLabourTeam]);
 
   useEffect(() => {
     setSelectedProject(null);
@@ -151,6 +152,8 @@ const WorkAndMaterialEntry = () => {
   }, [selectedProject]);
 
   useEffect(() => {
+    setSelectedLabourTeam(null);
+    setSelectedAssignmentLabours([]);
     if (!selectedSite) {
       setWorkDescriptions([]);
       setSelectedWorkDescription(null);
@@ -201,10 +204,12 @@ const WorkAndMaterialEntry = () => {
   useEffect(() => {
     if (!selectedWorkDescription) {
       setLabourRoster([]);
+      setSelectedLabourTeam(null);
       setSelectedAssignmentLabours([]);
       return;
     }
 
+    setSelectedLabourTeam(null);
     setSelectedAssignmentLabours([]);
     let cancelled = false;
     const loadLabourRoster = async () => {
@@ -1125,6 +1130,21 @@ const WorkAndMaterialEntry = () => {
                   </p>
                   <div className="grid grid-cols-1 gap-3">
                     <label className="text-sm font-medium text-gray-700">
+                      Select team
+                      <Select
+                        className="mt-1"
+                        classNamePrefix="react-select"
+                        options={labourTeamOptions}
+                        value={selectedLabourTeam}
+                        onChange={team => {
+                          setSelectedLabourTeam(team);
+                          setSelectedAssignmentLabours([]);
+                        }}
+                        isDisabled={!selectedSite || labourTeamOptions.length === 0}
+                        placeholder="Select a team"
+                      />
+                    </label>
+                    <label className="text-sm font-medium text-gray-700">
                       Select labourers
                       <Select
                         className="mt-1"
@@ -1141,6 +1161,7 @@ const WorkAndMaterialEntry = () => {
                         }))}
                         isMulti
                         closeMenuOnSelect={false}
+                        isDisabled={!selectedLabourTeam}
                         placeholder="Select one or more labourers"
                       />
                     </label>
@@ -1214,7 +1235,7 @@ const WorkAndMaterialEntry = () => {
                             <HardHat size={17} className="shrink-0 text-amber-600" />
                             <div className="min-w-0">
                               <div className="truncate font-medium text-gray-800">{labour.full_name}</div>
-                              <div className="text-xs text-gray-500">Head: {labour.head_name || "No head assigned"}</div>
+                              <div className="text-xs text-gray-500">Team: {labour.team_name || "Other labourers"}</div>
                             </div>
                           </div>
                           <label className="text-xs font-medium text-gray-600">

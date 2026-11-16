@@ -2100,14 +2100,9 @@ exports.getLabourAttendance = async (req, res) => {
          la.id as assignment_id, 
          la.labour_id, 
          l.full_name, 
+         COALESCE(NULLIF(l.team_name, ''), 'Other labourers') AS team_name,
          COALESCE(NULLIF(la.salary, 0), l.approved_salary) AS shift_rate,
          lat.shift_cost AS daily_shift_cost,
-         COALESCE(
-           head.full_name,
-           CASE WHEN EXISTS (
-             SELECT 1 FROM labour_team_members team_lead WHERE team_lead.head_labour_id = l.id
-           ) THEN CONCAT(l.full_name, ' (Head)') ELSE 'No head assigned' END
-         ) AS head_name,
          lat.id as attendance_id,
          lat.shift,
          ROUND(lat.shift * COALESCE(lat.shift_cost, NULLIF(la.salary, 0), l.approved_salary), 2) AS labour_cost,
@@ -2116,8 +2111,6 @@ exports.getLabourAttendance = async (req, res) => {
          lat.updated_at
        FROM labour_assignment la 
        JOIN labour l ON la.labour_id = l.id 
-       LEFT JOIN labour_team_members team ON team.member_labour_id = l.id
-       LEFT JOIN labour head ON head.id = team.head_labour_id
        LEFT JOIN labour_attendance lat ON la.id = lat.labour_assignment_id AND lat.entry_date = ?
        WHERE la.project_id = ? AND la.site_id = ? AND la.desc_id = ?
          AND la.from_date <= ? AND la.to_date >= ?`,
@@ -2802,37 +2795,9 @@ exports.getLabours = async (req, res) => {
   try {
     const [labours] = await db.query(
       `SELECT l.id, l.full_name, l.approved_salary,
-              CASE
-                WHEN team.head_labour_id IS NOT NULL THEN team.head_labour_id
-                WHEN EXISTS (
-                  SELECT 1
-                  FROM labour_team_members team_lead
-                  WHERE team_lead.head_labour_id = l.id
-                ) THEN l.id
-                ELSE NULL
-              END AS team_id,
-              CASE
-                WHEN team.head_labour_id IS NOT NULL THEN head.full_name
-                WHEN EXISTS (
-                  SELECT 1
-                  FROM labour_team_members team_lead
-                  WHERE team_lead.head_labour_id = l.id
-                ) THEN l.full_name
-                ELSE 'Other labourers'
-              END AS team_name,
-              CASE
-                WHEN team.head_labour_id IS NOT NULL THEN 'member'
-                WHEN EXISTS (
-                  SELECT 1
-                  FROM labour_team_members team_lead
-                  WHERE team_lead.head_labour_id = l.id
-                ) THEN 'head'
-                ELSE 'unassigned'
-              END AS team_role
+              COALESCE(NULLIF(l.team_name, ''), 'Other labourers') AS team_name
        FROM labour l
-       LEFT JOIN labour_team_members team ON team.member_labour_id = l.id
-       LEFT JOIN labour head ON head.id = team.head_labour_id
-       ORDER BY team_id IS NULL, team_id, team_role, l.full_name`
+       ORDER BY team_name, l.full_name`
     );
 
     // Log the number of records retrieved for debugging

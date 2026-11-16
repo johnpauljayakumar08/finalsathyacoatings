@@ -2,6 +2,7 @@ import { API_BASE_URL } from "../config/api.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import axios from "axios";
+import CreatableSelect from "react-select/creatable";
 import { Loader2, Save, User, Building, Calendar, Mail, Phone, MapPin, Users, Briefcase, FileText, DollarSign, LockKeyhole, Landmark } from "lucide-react";
 
 const COMPANY_NAME = "Sathya Coatings";
@@ -15,7 +16,6 @@ const initialFormData = {
   date_of_joining: "",
   status_id: "",
   company: COMPANY_NAME,
-  dept_id: "",
   emp_type_id: "",
   designation_id: "",
   mobile: "",
@@ -43,14 +43,14 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
   const [formData, setFormData] = useState(initialFormData);
   const [errors, setErrors] = useState({});
   const [genders, setGenders] = useState([]);
-  const [departments, setDepartments] = useState([]);
+  const [teamNameOptions, setTeamNameOptions] = useState([]);
   const [employmentTypes, setEmploymentTypes] = useState([]);
   const [designations, setDesignations] = useState([]);
   const [statuses, setStatuses] = useState([]);
   const [loading, setLoading] = useState({
     form: false,
     genders: false,
-    departments: false,
+    teamNames: false,
     employmentTypes: false,
     designations: false,
     statuses: false,
@@ -93,12 +93,35 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
       }
     };
     fetchOptions("genders", "/material/genders", setGenders);
-    fetchOptions("departments", "/material/departments", setDepartments);
     fetchOptions("employmentTypes", "/material/employment-types", setEmploymentTypes);
     fetchOptions("designations", "/material/designations", setDesignations);
     fetchOptions("statuses", "/material/statuses", setStatuses);
     return undefined;
   }, [isOpen, saveToDatabase]);
+
+  useEffect(() => {
+    if (!isOpen || !isLabor || !saveToDatabase) return undefined;
+    let active = true;
+    const fetchTeamNames = async () => {
+      setLoading((previous) => ({ ...previous, teamNames: true }));
+      try {
+        const { data } = await axios.get(`${API_BASE_URL}/admin/labour`);
+        if (active) {
+          const names = [...new Set((data.data || [])
+            .map((labour) => String(labour.team_name || "").trim())
+            .filter(Boolean))].sort((a, b) => a.localeCompare(b));
+          setTeamNameOptions(names.map((name) => ({ value: name, label: name })));
+        }
+      } catch (error) {
+        console.error("Error fetching labor team names:", error);
+        if (active) setErrors((previous) => ({ ...previous, form: "Failed to load existing team names. You can still enter a new team name." }));
+      } finally {
+        if (active) setLoading((previous) => ({ ...previous, teamNames: false }));
+      }
+    };
+    fetchTeamNames();
+    return () => { active = false; };
+  }, [isOpen, isLabor, saveToDatabase]);
 
   const validateForm = () => {
     const newErrors = {};
@@ -121,7 +144,6 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
     if (!formData.status_id) newErrors.status_id = "Status is required";
     if (!formData.emp_type_id) newErrors.emp_type_id = "Employee Type is required";
     if (!formData.designation_id) newErrors.designation_id = "Designation is required";
-    if (!isLabor && !formData.dept_id) newErrors.dept_id = "Department is required";
     if (!formData.mobile) newErrors.mobile = "Mobile is required";
     else if (!mobileRegex.test(formData.mobile)) newErrors.mobile = "Invalid mobile: 10 digits, optional +91";
     if (!formData.company_email) newErrors.company_email = "Company Email is required";
@@ -211,7 +233,6 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
   if (!isOpen) return null;
 
   const genderOptions = saveToDatabase ? genders : [{ id: "1", gender: "Male" }, { id: "2", gender: "Female" }];
-  const departmentOptions = saveToDatabase ? departments : [{ id: "1", department: "General" }];
   const statusOptions = saveToDatabase ? statuses : [{ id: "1", status: "Active" }];
   const employmentOptions = saveToDatabase
     ? availableEmploymentTypes
@@ -225,11 +246,10 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
     { label: "Date of Joining", name: "date_of_joining", type: "date", icon: Calendar },
     { label: "Status", name: "status_id", type: "select", options: statusOptions, optLabel: "status", loading: loading.statuses, icon: Users },
     { label: "Company", name: "company", type: "fixed", icon: Building },
-    ...(!isLabor ? [{ label: "Department", name: "dept_id", type: "select", options: departmentOptions, optLabel: "department", loading: loading.departments, icon: Users }] : []),
     { label: "Employee Type", name: "emp_type_id", type: "select", options: employmentOptions, optLabel: "type", loading: loading.employmentTypes, icon: Briefcase },
     { label: "Designation", name: "designation_id", type: "select", options: designationOptions, optLabel: "designation", loading: loading.designations, icon: Users },
     ...(isLabor ? [
-      { label: "Team Name", name: "team_name", type: "text", placeholder: "Enter team name", icon: Users },
+      { label: "Team Name", name: "team_name", type: "creatable-select", options: teamNameOptions, loading: loading.teamNames, placeholder: "Select an existing team or enter a new one", icon: Users },
       { label: "Father/Guardian Name", name: "father_guardian_name", type: "text", placeholder: "Enter father/guardian name", icon: User },
       { label: "Father/Guardian Mobile", name: "father_guardian_mobile", type: "tel", placeholder: "10 digits, optional +91", icon: Phone },
     ] : []),
@@ -271,6 +291,29 @@ const AddEmployee = ({ isOpen, onClose, onSave, isAddingEmployee, saveToDatabase
                 </label>
                 {field.type === "fixed" ? (
                   <input type="text" value={COMPANY_NAME} readOnly className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-700 sm:text-sm" />
+                ) : field.type === "creatable-select" ? (
+                  <CreatableSelect
+                    className="text-sm"
+                    classNamePrefix="react-select"
+                    isClearable
+                    isDisabled={field.loading || isAddingEmployee}
+                    isLoading={field.loading}
+                    options={field.options}
+                    value={formData.team_name ? { value: formData.team_name, label: formData.team_name } : null}
+                    onChange={(option) => {
+                      setFormData((previous) => ({ ...previous, team_name: option?.value || "" }));
+                      setErrors((previous) => ({ ...previous, team_name: null }));
+                    }}
+                    onCreateOption={(inputValue) => {
+                      const teamName = inputValue.trim();
+                      if (!teamName) return;
+                      setTeamNameOptions((previous) => [...previous, { value: teamName, label: teamName }]);
+                      setFormData((previous) => ({ ...previous, team_name: teamName }));
+                      setErrors((previous) => ({ ...previous, team_name: null }));
+                    }}
+                    placeholder={field.placeholder}
+                    formatCreateLabel={(inputValue) => `Create team "${inputValue}"`}
+                  />
                 ) : field.type === "select" ? (
                   <div className="relative">
                     <select

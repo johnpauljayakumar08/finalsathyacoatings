@@ -25,6 +25,7 @@ const LabourAssign = () => {
   const [selectedProject, setSelectedProject] = useState(null);
   const [selectedSite, setSelectedSite] = useState(null);
   const [selectedWorkDesc, setSelectedWorkDesc] = useState(null);
+  const [selectedTeam, setSelectedTeam] = useState(null);
   const [selectedLabours, setSelectedLabours] = useState([]);
   const [fromDate, setFromDate] = useState(() => {
     const today = new Date();
@@ -319,11 +320,17 @@ const LabourAssign = () => {
     label: desc.desc_name,
   }));
 
-  const labourOptions = labours.map(labour => ({
+  const teamOptions = [...new Set(labours.map(labour => labour.team_name || "Other labourers"))]
+    .sort((left, right) => left.localeCompare(right))
+    .map(teamName => ({ value: teamName, label: teamName }));
+
+  const labourOptions = labours
+    .filter(labour => (labour.team_name || "Other labourers") === selectedTeam?.value)
+    .map(labour => ({
     value: labour.id,
     label: `${labour.id} - ${labour.full_name}`,
     approved_salary: labour.approved_salary,
-  }));
+    }));
 
   const formatDateForDisplay = (dateString) => {
     if (!dateString) return '';
@@ -379,10 +386,30 @@ const LabourAssign = () => {
             <Select
               options={siteOptions}
               value={selectedSite}
-              onChange={setSelectedSite}
+              onChange={(option) => {
+                setSelectedSite(option);
+                setSelectedTeam(null);
+                setSelectedLabours([]);
+              }}
               placeholder="Search Site..."
               isSearchable
               isDisabled={!selectedProject}
+              className="w-full"
+              classNamePrefix="react-select"
+            />
+          </div>
+          <div className="min-w-0">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Select Team</label>
+            <Select
+              options={teamOptions}
+              value={selectedTeam}
+              onChange={(option) => {
+                setSelectedTeam(option);
+                setSelectedLabours([]);
+              }}
+              placeholder="Search Team..."
+              isSearchable
+              isDisabled={loading || !selectedSite}
               className="w-full"
               classNamePrefix="react-select"
             />
@@ -413,7 +440,7 @@ const LabourAssign = () => {
               placeholder="Search Labours..."
               isSearchable
               isMulti
-              isDisabled={loading || !selectedProject || !selectedSite || !selectedWorkDesc}
+              isDisabled={loading || !selectedProject || !selectedSite || !selectedWorkDesc || !selectedTeam}
               className="w-full"
               classNamePrefix="react-select"
             />
