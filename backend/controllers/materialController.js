@@ -235,40 +235,102 @@ exports.fetchDesignations = async (req, res) => {
 
 exports.fetchEmployees = async (req, res) => {
   try {
+    const conditions = [];
+    const params = [];
+    if (req.query.designation) {
+      conditions.push('personnel.designation = ?');
+      params.push(req.query.designation);
+    }
+    if (req.query.status) {
+      conditions.push('personnel.status = ?');
+      params.push(req.query.status);
+    }
+    if (req.query.company) {
+      conditions.push('personnel.company = ?');
+      params.push(req.query.company);
+    }
+    if (req.query.search) {
+      const search = `%${req.query.search}%`;
+      conditions.push('(personnel.emp_id LIKE ? OR personnel.full_name LIKE ? OR personnel.company_email LIKE ?)');
+      params.push(search, search, search);
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const query = `
-      SELECT 
-        em.emp_id,
-        em.full_name,
-        COALESCE(eg.gender, 'Unknown') AS gender,
-        em.date_of_birth,
-        em.date_of_joining,
-        COALESCE(es.status, 'Unknown') AS status,
-        em.company,
-        COALESCE(ed.department, 'Unknown') AS department,
-        COALESCE(et.type, 'Unknown') AS employment_type,
-        COALESCE(edg.designation, 'Unknown') AS designation,
-        em.branch,
-        em.mobile,
-        em.company_email,
-        em.current_address,
-        em.permanent_address,
-        em.esic_number,
-        em.pf_number,
-        em.created_at,
-        em.approved_salary,
-        u.user_name AS login_user_name,
-        u.user_id AS login_user_id
-      FROM employee_master em
-      LEFT JOIN emp_gender eg ON em.gender_id = eg.id
-      LEFT JOIN emp_department ed ON em.dept_id = ed.id
-      LEFT JOIN employment_type et ON em.emp_type_id = et.id
-      LEFT JOIN emp_designation edg ON em.designation_id = edg.id
-      LEFT JOIN emp_status es ON em.status_id = es.id
-      LEFT JOIN users u ON u.user_email = em.company_email
-      ORDER BY em.created_at DESC
+      SELECT personnel.*
+      FROM (
+        SELECT
+          em.emp_id,
+          em.full_name,
+          COALESCE(eg.gender, 'Unknown') AS gender,
+          em.date_of_birth,
+          em.date_of_joining,
+          COALESCE(es.status, 'Unknown') AS status,
+          em.company,
+          COALESCE(ed.department, 'Unknown') AS department,
+          COALESCE(et.type, 'Unknown') AS employment_type,
+          COALESCE(edg.designation, 'Unknown') AS designation,
+          em.branch,
+          em.mobile,
+          em.company_email,
+          em.current_address,
+          em.permanent_address,
+          em.esic_number,
+          em.pf_number,
+          em.created_at,
+          em.approved_salary,
+          u.user_name AS login_user_name,
+          u.user_id AS login_user_id,
+          CASE
+            WHEN LOWER(REPLACE(REPLACE(edg.designation, ' ', ''), '-', '')) IN ('sitesupervisor', 'siteengineer')
+              THEN 'Site Incharge'
+            ELSE 'Employee'
+          END AS personnel_type
+        FROM employee_master em
+        LEFT JOIN emp_gender eg ON em.gender_id = eg.id
+        LEFT JOIN emp_department ed ON em.dept_id = ed.id
+        LEFT JOIN employment_type et ON em.emp_type_id = et.id
+        LEFT JOIN emp_designation edg ON em.designation_id = edg.id
+        LEFT JOIN emp_status es ON em.status_id = es.id
+        LEFT JOIN users u ON u.user_email = em.company_email
+
+        UNION ALL
+
+        SELECT
+          CAST(l.id AS CHAR) AS emp_id,
+          l.full_name,
+          COALESCE(eg.gender, 'Unknown') AS gender,
+          l.date_of_birth,
+          l.date_of_joining,
+          COALESCE(es.status, 'Unknown') AS status,
+          l.company,
+          COALESCE(ed.department, 'Unknown') AS department,
+          COALESCE(et.type, 'Unknown') AS employment_type,
+          COALESCE(edg.designation, 'Unknown') AS designation,
+          l.branch,
+          l.mobile,
+          l.company_email,
+          l.current_address,
+          l.permanent_address,
+          l.esic_number,
+          l.pf_number,
+          l.created_at,
+          l.approved_salary,
+          NULL AS login_user_name,
+          NULL AS login_user_id,
+          'Labor' AS personnel_type
+        FROM labour l
+        LEFT JOIN emp_gender eg ON l.gender_id = eg.id
+        LEFT JOIN emp_department ed ON l.dept_id = ed.id
+        LEFT JOIN employment_type et ON l.emp_type_id = et.id
+        LEFT JOIN emp_designation edg ON l.designation_id = edg.id
+        LEFT JOIN emp_status es ON l.status_id = es.id
+      ) personnel
+      ${whereClause}
+      ORDER BY personnel.created_at DESC, personnel.full_name
     `;
 
-    const [rows] = await db.query(query);
+    const [rows] = await db.query(query, params);
 
     res.status(200).json({
       status: 'success',

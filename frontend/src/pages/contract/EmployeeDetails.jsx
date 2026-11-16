@@ -1,5 +1,5 @@
 import { API_BASE_URL } from "../../config/api.js";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import Swal from "sweetalert2";
 import { useParams } from "react-router-dom";
@@ -73,6 +73,7 @@ const EmployeeDetails = () => {
   });
   const menuRef = useRef(null);
   const labourFileInputRef = useRef(null);
+  const employeeFetchControllerRef = useRef(null);
 
   const downloadLabourTemplate = async () => {
     try {
@@ -344,7 +345,7 @@ const EmployeeDetails = () => {
   const formatValue = (value) => value || "N/A";
 
   // Fetch filter options
-  const fetchFilterOptions = async () => {
+  const fetchFilterOptions = useCallback(async () => {
     try {
       const [designationsRes, statusesRes, employeesRes] = await Promise.all([
         axios.get(`${API_BASE_URL}/material/designations`),
@@ -363,10 +364,13 @@ const EmployeeDetails = () => {
       console.error("Error fetching filter options:", error);
       setError("Failed to load filter options. Please try again.");
     }
-  };
+  }, []);
 
   // Fetch employees
-  const fetchEmployees = async () => {
+  const fetchEmployees = useCallback(async () => {
+    employeeFetchControllerRef.current?.abort();
+    const controller = new AbortController();
+    employeeFetchControllerRef.current = controller;
     try {
       setLoading(true);
       setError(null);
@@ -376,30 +380,57 @@ const EmployeeDetails = () => {
       if (filters.company) params.company = filters.company;
       if (filters.search) params.search = filters.search;
 
-      const response = await axios.get(`${API_BASE_URL}/material/employees`, { params });
+      const response = await axios.get(`${API_BASE_URL}/material/employees`, {
+        params,
+        signal: controller.signal,
+      });
       if (response.data.status === "success") {
-        setEmployees(response.data.data || []);
-        if (response.data.data.length === 0) {
-          setError(response.data.message || "No employees found.");
+        const normalize = (value) => String(value ?? "").trim().toLocaleLowerCase();
+        const search = normalize(filters.search);
+        const rows = Array.isArray(response.data.data) ? response.data.data : [];
+        const filteredRows = rows.filter((person) => (
+          (!filters.designation || normalize(person.designation) === normalize(filters.designation)) &&
+          (!filters.status || normalize(person.status) === normalize(filters.status)) &&
+          (!filters.company || normalize(person.company) === normalize(filters.company)) &&
+          (!search || [person.emp_id, person.full_name, person.company_email]
+            .some((value) => normalize(value).includes(search)))
+        )).map((person) => {
+          if (person.personnel_type) return person;
+          const designation = normalize(person.designation).replace(/[^a-z]/g, "");
+          return {
+            ...person,
+            personnel_type: ["sitesupervisor", "siteengineer"].includes(designation)
+              ? "Site Incharge"
+              : "Employee",
+          };
+        });
+        setEmployees(filteredRows);
+        if (filteredRows.length === 0) {
+          setError("No personnel records match the selected filters.");
         }
       } else {
         setError(response.data.message || "Failed to fetch employee details.");
       }
     } catch (error) {
-      setError(error.response?.data?.message || "Failed to fetch employee details.");
+      if (!controller.signal.aborted) {
+        setError(error.response?.data?.message || "Failed to fetch employee details.");
+      }
     } finally {
-      setLoading(false);
+      if (employeeFetchControllerRef.current === controller) {
+        employeeFetchControllerRef.current = null;
+        setLoading(false);
+      }
     }
-  };
+  }, [filters]);
 
   useEffect(() => {
     fetchFilterOptions();
-    fetchEmployees();
-  }, []);
+  }, [fetchFilterOptions]);
 
   useEffect(() => {
     fetchEmployees();
-  }, [filters]);
+    return () => employeeFetchControllerRef.current?.abort();
+  }, [fetchEmployees]);
 
   // Handle clicks outside the employee type menu to close it
   useEffect(() => {
@@ -553,7 +584,7 @@ const EmployeeDetails = () => {
               Employee Details
             </h2>
             <p className="text-gray-600 text-sm sm:text-base">
-              View detailed information of all employees
+              View employees, site incharges, and labor in a single table
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -625,7 +656,7 @@ const EmployeeDetails = () => {
 
         {showFilter && (
           <div className="mb-6 p-4 sm:p-6 bg-white rounded-xl shadow-sm border border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">Filter Employees</h3>
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">Filter Personnel</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -719,7 +750,7 @@ const EmployeeDetails = () => {
           </div>
         ) : employees.length === 0 ? (
           <div className="text-center py-12 text-gray-600 text-sm sm:text-base">
-            No employees found.
+            No personnel records found.
           </div>
         ) : (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -727,122 +758,66 @@ const EmployeeDetails = () => {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      S.No
-                    </th>
-                    <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Employee ID
-                    </th>
-                    <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Personal Details
-                    </th>
-                    <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[280px] sm:w-[320px] lg:w-[360px]">
-                      Employment Details
-                    </th>
-                    <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[280px] sm:w-[320px] lg:w-[360px]">
-                      Contact Details
-                    </th>
-                    <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      JOINED DATE
-                    </th>
-                    <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      LOGIN
-                    </th>
+                    {[
+                      "S.No", "Record Type", "Employee / Labor ID", "Full Name", "Gender",
+                      "Date of Birth", "Date of Joining", "Company", "Department",
+                      "Employment Type", "Designation", "Branch", "Status", "Approved Salary",
+                      "Mobile", "Email", "ESIC Number", "PF Number", "Current Address",
+                      "Permanent Address", "Login",
+                    ].map((heading) => (
+                      <th
+                        key={heading}
+                        className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap"
+                      >
+                        {heading}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {employees.map((employee, index) => (
                     <tr
-                      key={employee.emp_id}
+                      key={`${employee.personnel_type}-${employee.emp_id}`}
                       className={`transition-colors ${index % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-indigo-50`}
                     >
-                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {index + 1}
-                      </td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{index + 1}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.personnel_type)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.emp_id)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{formatValue(employee.full_name)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.gender)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatDate(employee.date_of_birth)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatDate(employee.date_of_joining)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.company)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.department)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.employment_type)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.designation)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.branch)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.status)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.approved_salary)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.mobile)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.company_email)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.esic_number)}</td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatValue(employee.pf_number)}</td>
+                      <td className="px-4 sm:px-6 py-4 min-w-56 text-sm text-gray-700">{formatValue(employee.current_address)}</td>
+                      <td className="px-4 sm:px-6 py-4 min-w-56 text-sm text-gray-700">{formatValue(employee.permanent_address)}</td>
                       <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                        {formatValue(employee.emp_id)}
-                      </td>
-                      <td className="px-4 sm:px-6 py-4 text-sm text-gray-700">
-                        <div className="bg-indigo-50 p-4 sm:p-5 rounded-lg space-y-2">
-                          <p className="font-semibold text-indigo-700 text-sm sm:text-base">
-                            {formatValue(employee.full_name)}
-                          </p>
-                          <p className="text-xs sm:text-sm text-indigo-600">
-                            <span className="font-semibold">Gender:</span> {formatValue(employee.gender)}
-                          </p>
-                          <p className="text-xs sm:text-sm text-indigo-600">
-                            <span className="font-semibold">DOB:</span> {formatDate(employee.date_of_birth)}
-                          </p>
-                        </div>
-                      </td>
-                      <td className="px-4 sm:px-6 py-4 text-sm text-gray-700">
-                        <div className="bg-gray-100 p-4 sm:p-5 rounded-lg space-y-2">
-                          <p className="font-semibold text-gray-800 text-sm sm:text-base">
-                            {formatValue(employee.company)}
-                          </p>
-                          <p className="text-xs sm:text-sm text-gray-600">
-                            <span className="font-semibold">Department:</span> {formatValue(employee.department)}
-                          </p>
-                          <p className="text-xs sm:text-sm text-gray-600">
-                            <span className="font-semibold">Type:</span> {formatValue(employee.employment_type)}
-                          </p>
-                          <p className="text-xs sm:text-sm text-gray-600">
-                            <span className="font-semibold">Designation:</span> {formatValue(employee.designation)}
-                          </p>
-                          <p className="text-xs sm:text-sm text-gray-600">
-                            <span className="font-semibold">Branch:</span> {formatValue(employee.branch)}
-                          </p>
-                          <p className="text-xs sm:text-sm text-gray-600">
-                            <span className="font-semibold">Status:</span> {formatValue(employee.status)}
-                          </p>
-                          <p className="text-xs sm:text-sm text-gray-600">
-                            <span className="font-semibold">Approved Salary per Shift:</span> {formatValue(employee.approved_salary)}
-                          </p>
-                        </div>
-                      </td>
-                      <td className="px-4 sm:px-6 py-4 text-sm text-gray-700">
-                        <div className="bg-gray-100 p-4 sm:p-5 rounded-lg space-y-2">
-                          <p className="text-xs sm:text-sm text-gray-600">
-                            <span className="font-semibold">Email:</span> {formatValue(employee.company_email)}
-                          </p>
-                          <p className="text-xs sm:text-sm text-gray-600">
-                            <span className="font-semibold">Mobile:</span> {formatValue(employee.mobile)}
-                          </p>
-                          <p className="text-xs sm:text-sm text-gray-600">
-                            <span className="font-semibold">ESIC Number:</span> {formatValue(employee.esic_number)}
-                          </p>
-                          <p className="text-xs sm:text-sm text-gray-600">
-                            <span className="font-semibold">PF Number:</span> {formatValue(employee.pf_number)}
-                          </p>
-                          <p className="text-xs sm:text-sm text-gray-600">
-                            <span className="font-semibold">Current:</span> {formatValue(employee.current_address)}
-                          </p>
-                          <p className="text-xs sm:text-sm text-gray-600">
-                            <span className="font-semibold">Permanent:</span> {formatValue(employee.permanent_address)}
-                          </p>
-                        </div>
-                      </td>
-                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                        <div className="bg-green-50 p-4 sm:p-5 rounded-lg space-y-2">
-                          <p className="text-xs sm:text-sm text-green-700">
-                            <span className="font-semibold"></span> {formatDate(employee.date_of_joining)}
-                          </p>
-                        </div>
-                      </td>
-                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                        <div className="space-y-2">
-                          <p className="text-xs text-gray-600">
-                            {employee.login_user_id ? `Username: ${employee.login_user_name}` : "No login account"}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => openLoginEditor(employee)}
-                            className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                            {employee.login_user_id ? "Edit Login" : "Set Login"}
-                          </button>
-                        </div>
+                        {employee.personnel_type === "Labor" ? (
+                          "No login account"
+                        ) : (
+                          <div className="space-y-2">
+                            <p className="text-xs text-gray-600">
+                              {employee.login_user_id ? `Username: ${employee.login_user_name}` : "No login account"}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => openLoginEditor(employee)}
+                              className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                              {employee.login_user_id ? "Edit Login" : "Set Login"}
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
