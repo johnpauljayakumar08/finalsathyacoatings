@@ -235,31 +235,52 @@ exports.fetchDesignations = async (req, res) => {
 
 exports.fetchEmployees = async (req, res) => {
   try {
-    const conditions = [];
-    const params = [];
-    if (req.query.designation) {
-      conditions.push('personnel.designation = ?');
-      params.push(req.query.designation);
-    }
-    if (req.query.status) {
-      conditions.push('personnel.status = ?');
-      params.push(req.query.status);
-    }
-    if (req.query.company) {
-      conditions.push('personnel.company = ?');
-      params.push(req.query.company);
-    }
-    if (req.query.search) {
-      const search = `%${req.query.search}%`;
-      conditions.push('(personnel.emp_id LIKE ? OR personnel.full_name LIKE ? OR personnel.company_email LIKE ?)');
-      params.push(search, search, search);
-    }
+    const buildFilters = ({ id, name, email, designation, status, company }) => {
+      const conditions = [];
+      const params = [];
+      if (req.query.designation) {
+        conditions.push(`${designation} = ?`);
+        params.push(req.query.designation);
+      }
+      if (req.query.status) {
+        conditions.push(`${status} = ?`);
+        params.push(req.query.status);
+      }
+      if (req.query.company) {
+        conditions.push(`${company} = ?`);
+        params.push(req.query.company);
+      }
+      if (req.query.search) {
+        const search = `%${req.query.search}%`;
+        conditions.push(`(${id} LIKE ? OR ${name} LIKE ? OR ${email} LIKE ?)`);
+        params.push(search, search, search);
+      }
+      return {
+        where: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '',
+        params
+      };
+    };
 
-    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-    const query = `
-      SELECT personnel.*
-      FROM (
-        SELECT
+    const employeeFilters = buildFilters({
+      id: 'em.emp_id',
+      name: 'em.full_name',
+      email: 'em.company_email',
+      designation: 'edg.designation',
+      status: 'es.status',
+      company: 'em.company'
+    });
+    const labourFilters = buildFilters({
+      id: 'l.id',
+      name: 'l.full_name',
+      email: 'l.company_email',
+      designation: 'edg.designation',
+      status: 'es.status',
+      company: 'l.company'
+    });
+
+    const [employeeResult, labourResult] = await Promise.all([
+      db.query(
+        `SELECT
           em.emp_id,
           em.full_name,
           COALESCE(eg.gender, 'Unknown') AS gender,
@@ -293,10 +314,11 @@ exports.fetchEmployees = async (req, res) => {
         LEFT JOIN emp_designation edg ON em.designation_id = edg.id
         LEFT JOIN emp_status es ON em.status_id = es.id
         LEFT JOIN users u ON u.user_email = em.company_email
-
-        UNION ALL
-
-        SELECT
+        ${employeeFilters.where}`,
+        employeeFilters.params
+      ),
+      db.query(
+        `SELECT
           CAST(l.id AS CHAR) AS emp_id,
           l.full_name,
           COALESCE(eg.gender, 'Unknown') AS gender,
@@ -325,12 +347,15 @@ exports.fetchEmployees = async (req, res) => {
         LEFT JOIN employment_type et ON l.emp_type_id = et.id
         LEFT JOIN emp_designation edg ON l.designation_id = edg.id
         LEFT JOIN emp_status es ON l.status_id = es.id
-      ) personnel
-      ${whereClause}
-      ORDER BY personnel.created_at DESC, personnel.full_name
-    `;
+        ${labourFilters.where}`,
+        labourFilters.params
+      )
+    ]);
 
-    const [rows] = await db.query(query, params);
+    const rows = [...employeeResult[0], ...labourResult[0]].sort((a, b) => {
+      const dateDifference = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      return dateDifference || String(a.full_name).localeCompare(String(b.full_name));
+    });
 
     res.status(200).json({
       status: 'success',

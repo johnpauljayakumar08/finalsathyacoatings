@@ -18,15 +18,12 @@ const createResponse = () => ({
 
 test('resource personnel fetch includes employees and labor and applies parameterized filters', async () => {
   const originalQuery = db.query;
-  let capturedQuery = '';
-  let capturedParams = [];
+  const calls = [];
   db.query = async (query, params) => {
-    capturedQuery = query;
-    capturedParams = params;
-    return [[
-      { emp_id: 'EMP-1', personnel_type: 'Site Incharge' },
-      { emp_id: '1', personnel_type: 'Labor' }
-    ]];
+    calls.push({ query, params });
+    return query.includes('FROM employee_master em')
+      ? [[{ emp_id: 'EMP-1', personnel_type: 'Site Incharge', created_at: '2026-11-16' }]]
+      : [[{ emp_id: '1', personnel_type: 'Labor', created_at: '2026-11-15' }]];
   };
   const response = createResponse();
 
@@ -45,15 +42,20 @@ test('resource personnel fetch includes employees and labor and applies paramete
 
   assert.equal(response.statusCode, 200);
   assert.equal(response.body.data.length, 2);
-  assert.match(capturedQuery, /FROM employee_master em/);
-  assert.match(capturedQuery, /UNION ALL/);
-  assert.match(capturedQuery, /FROM labour l/);
-  assert.deepEqual(capturedParams, [
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].query, /FROM employee_master em/);
+  assert.match(calls[1].query, /FROM labour l/);
+  assert.ok(calls.every(({ query }) => !query.includes('UNION')));
+  const expectedParams = [
     'Site Engineer',
     'Active',
     'Sathya Coatings',
     '%Kumar%',
     '%Kumar%',
     '%Kumar%'
-  ]);
+  ];
+  assert.deepEqual(calls[0].params, expectedParams);
+  assert.deepEqual(calls[1].params, expectedParams);
+  assert.equal(response.body.data[0].personnel_type, 'Site Incharge');
+  assert.equal(response.body.data[1].personnel_type, 'Labor');
 });

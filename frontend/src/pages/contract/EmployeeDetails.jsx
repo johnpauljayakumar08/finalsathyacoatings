@@ -56,6 +56,7 @@ const EmployeeDetails = () => {
   const [showAddEmployeeModal, setShowAddEmployeeModal] = useState(false);
   const [showAddTemporaryEmployeeModal, setShowAddTemporaryEmployeeModal] = useState(false);
   const [editingLoginEmployee, setEditingLoginEmployee] = useState(null);
+  const [activePersonnelTab, setActivePersonnelTab] = useState("Site Incharge");
   const [loginForm, setLoginForm] = useState({ user_password: "" });
   const [isUpdatingLogin, setIsUpdatingLogin] = useState(false);
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
@@ -455,6 +456,10 @@ const EmployeeDetails = () => {
     setShowFilter(false);
   };
 
+  const siteIncharges = employees.filter((person) => person.personnel_type === "Site Incharge");
+  const labours = employees.filter((person) => person.personnel_type === "Labor");
+  const visiblePersonnel = activePersonnelTab === "Site Incharge" ? siteIncharges : labours;
+
   // Handle saving new employee (for both fixed and temporary)
   const handleSaveEmployee = async (newEmployeeData, designation) => {
     try {
@@ -735,6 +740,28 @@ const EmployeeDetails = () => {
           </div>
         )}
 
+        <div className="mb-4 flex flex-wrap gap-2" role="tablist" aria-label="Personnel tables">
+          {[
+            { label: "Site Incharge", count: siteIncharges.length },
+            { label: "Labor", count: labours.length },
+          ].map(({ label, count }) => (
+            <button
+              key={label}
+              type="button"
+              role="tab"
+              aria-selected={activePersonnelTab === label}
+              onClick={() => setActivePersonnelTab(label)}
+              className={`rounded-md px-4 py-2 text-sm font-semibold ${
+                activePersonnelTab === label
+                  ? "bg-indigo-600 text-white"
+                  : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              {label} ({count})
+            </button>
+          ))}
+        </div>
+
         {loading ? (
           <div className="flex justify-center items-center py-12">
             <div className="flex flex-col items-center">
@@ -748,9 +775,9 @@ const EmployeeDetails = () => {
           <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-lg text-sm sm:text-base">
             {error}
           </div>
-        ) : employees.length === 0 ? (
+        ) : visiblePersonnel.length === 0 ? (
           <div className="text-center py-12 text-gray-600 text-sm sm:text-base">
-            No personnel records found.
+            No {activePersonnelTab.toLowerCase()} records match the selected filters.
           </div>
         ) : (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -775,7 +802,7 @@ const EmployeeDetails = () => {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {employees.map((employee, index) => (
+                  {visiblePersonnel.map((employee, index) => (
                     <tr
                       key={`${employee.personnel_type}-${employee.emp_id}`}
                       className={`transition-colors ${index % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-indigo-50`}
