@@ -147,10 +147,19 @@ const ProjectProjectionNew = () => {
     });
   }, [allocatedOverheads, isAllocated]);
   // Memoized sums for allocated data (updated to effective)
-  const { sumPerc, sumBudget } = useMemo(() => {
-    const percSum = allocatedOverheads.reduce((sum, oh) => sum + parseFloat(oh.percentage || 0), 0);
-    const budgetSum = allocatedOverheads.reduce((sum, oh) => sum + parseFloat(oh.splitted_budget || 0), 0);
-    return { sumPerc: percSum, sumBudget: budgetSum };
+  const { sumPerc, sumBudget, sumActualValue, sumBalance } = useMemo(() => {
+    const totals = allocatedOverheads.reduce((result, overhead) => {
+      result.sumPerc += parseFloat(overhead.percentage || 0);
+      result.sumBudget += parseFloat(overhead.splitted_budget || 0);
+      if (overhead.actual_value !== null && overhead.actual_value !== undefined && overhead.actual_value !== "") {
+        result.sumActualValue += parseFloat(overhead.actual_value) || 0;
+      }
+      if (overhead.difference_value !== null && overhead.difference_value !== undefined && overhead.difference_value !== "") {
+        result.sumBalance += parseFloat(overhead.difference_value) || 0;
+      }
+      return result;
+    }, { sumPerc: 0, sumBudget: 0, sumActualValue: 0, sumBalance: 0 });
+    return totals;
   }, [allocatedOverheads]);
   const total = useMemo(() => effectiveBudgetValue, [effectiveBudgetValue]);
   const percDiff = useMemo(() => sumPerc - 100, [sumPerc]);
@@ -3357,15 +3366,27 @@ const canAddProjection = useMemo(() => {
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Budget Percentage (%)
+                          <div className="mt-1 text-[11px] font-semibold normal-case text-gray-700">
+                            Total: {sumPerc.toFixed(2)}%
+                          </div>
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Budgeted Value (Rs.)
+                          <div className="mt-1 text-[11px] font-semibold normal-case text-gray-700">
+                            Total: {sumBudget.toFixed(2)}
+                          </div>
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Actual Value (Rs.)
+                          <div className="mt-1 text-[11px] font-semibold normal-case text-gray-700">
+                            Total: {sumActualValue.toFixed(2)}
+                          </div>
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Balance (Rs.)
+                          <div className="mt-1 text-[11px] font-semibold normal-case text-gray-700">
+                            Total: {sumBalance.toFixed(2)}
+                          </div>
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Remarks
@@ -3410,19 +3431,7 @@ const canAddProjection = useMemo(() => {
                   </table>
                 </div>
                 <div className="mt-6 p-6 bg-gradient-to-r from-gray-50 to-gray-100 rounded-xl">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div>
-                      <span className="font-medium text-gray-700">Total Percentage:</span>
-                      <span className="ml-2 text-lg font-bold text-green-600">
-                        {sumPerc.toFixed(2)}%
-                      </span>
-                    </div>
-                    <div>
-                      <span className="font-medium text-gray-700">Total Budget:</span>
-                      <span className="ml-2 text-lg font-bold text-green-600">
-                        ₹{sumBudget.toLocaleString()}
-                      </span>
-                    </div>
+                  <div className="grid grid-cols-1 gap-6">
                     <div>
                       <span className="font-medium text-gray-700">Target Budget (Last Proj):</span>
                       <span className="ml-2 text-lg font-bold text-indigo-600">

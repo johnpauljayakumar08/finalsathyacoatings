@@ -487,7 +487,7 @@ exports.getAllReckonerWithStatus = async () => {
               completion_status wc ON pr.rec_id = wc.rec_id
           LEFT JOIN 
               users u ON wc.created_by = u.user_id
-          ORDER BY pr.rec_id DESC
+          ORDER BY pr.rec_id ASC
       `);
     return results;
   } catch (error) {
