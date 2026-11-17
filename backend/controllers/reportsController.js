@@ -141,6 +141,11 @@ exports.getSiteOperationsReports = async (req, res) => {
     ] = await Promise.all([
       db.query(
         `SELECT sd.site_id, sd.site_name, pd.project_name,
+                CONCAT_WS(
+                  ' ',
+                  NULLIF(pr.item_id, ''),
+                  NULLIF(CONCAT_WS(' / ', NULLIF(ic.category_name, ''), NULLIF(isc.subcategory_name, '')), '')
+                ) AS item_display,
                 wd.desc_id, wd.desc_name AS work_description,
                 ceh.entry_id, ceh.entry_date, ceh.area_added AS completed_quantity,
                 pr.uom, ceh.rate, ceh.value_added AS completed_work_cost, ceh.remarks
@@ -149,6 +154,8 @@ exports.getSiteOperationsReports = async (req, res) => {
          JOIN site_details sd ON sd.site_id = pr.site_id
          LEFT JOIN project_details pd ON pd.pd_id = sd.pd_id
          LEFT JOIN work_descriptions wd ON wd.desc_id = pr.desc_id
+         LEFT JOIN item_category ic ON ic.category_id = pr.category_id
+         LEFT JOIN item_subcategory isc ON isc.subcategory_id = pr.subcategory_id
          WHERE 1 = 1${completionFilter.sql}
          ORDER BY sd.site_name, wd.desc_name, ceh.entry_date, ceh.entry_id`,
         completionFilter.params
@@ -156,6 +163,7 @@ exports.getSiteOperationsReports = async (req, res) => {
       db.query(
         `SELECT sd.site_id, sd.site_name, pd.project_name,
                 wd.desc_id, wd.desc_name AS work_description,
+                COALESCE(NULLIF(l.team_name, ''), 'Other labourers') AS team_name,
                 lat.id AS entry_id, lat.entry_date, l.full_name AS labour_name,
                 lat.shift, COALESCE(lat.shift_cost, NULLIF(la.salary, 0), l.approved_salary, 0) AS shift_cost,
                 ROUND(lat.shift * COALESCE(lat.shift_cost, NULLIF(la.salary, 0), l.approved_salary, 0), 2) AS labour_cost,
@@ -210,6 +218,7 @@ exports.getSiteOperationsReports = async (req, res) => {
       db.query(
         `SELECT sd.site_id, sd.site_name, pd.project_name,
                 wd.desc_id, wd.desc_name AS work_description,
+                o.id AS overhead_id,
                 o.expense_name AS budget_head,
                 SUM(COALESCE(ab.splitted_budget, 0)) AS allocated_budget,
                 SUM(COALESCE(abh.period_spent, 0)) AS spent,
@@ -227,15 +236,42 @@ exports.getSiteOperationsReports = async (req, res) => {
            GROUP BY actual_budget_id
          ) abh ON abh.actual_budget_id = ab.id
          WHERE 1 = 1${budgetWhere}
-         GROUP BY sd.site_id, sd.site_name, pd.project_name, wd.desc_id, wd.desc_name, o.expense_name
+         GROUP BY sd.site_id, sd.site_name, pd.project_name, wd.desc_id, wd.desc_name, o.id, o.expense_name
          ORDER BY sd.site_name, wd.desc_name, o.expense_name`,
         [...dateParams, ...budgetParams]
       )
     ]);
 
+    const sumByWork = (rows, field) => {
+      const totals = new Map();
+      for (const row of rows) {
+        const key = `${row.site_id}:${row.desc_id}`;
+        totals.set(key, (totals.get(key) || 0) + (Number(row[field]) || 0));
+      }
+      return totals;
+    };
+    const labourSpend = sumByWork(labour, 'labour_cost');
+    const materialSpend = sumByWork(materials, 'material_cost');
+    const budgetSummaryWithOperationalSpend = budgetSummary.map(row => {
+      const spendByWork = Number(row.overhead_id) === 2
+        ? labourSpend
+        : Number(row.overhead_id) === 1
+          ? materialSpend
+          : null;
+      if (!spendByWork) return row;
+
+      const spent = Number((spendByWork.get(`${row.site_id}:${row.desc_id}`) || 0).toFixed(2));
+      const allocated = Number(row.allocated_budget) || 0;
+      return {
+        ...row,
+        spent,
+        balance: Number((allocated - spent).toFixed(2))
+      };
+    });
+
     res.status(200).json({
       status: 'success',
-      data: { completion, labour, materials, expenses, budgetSummary }
+      data: { completion, labour, materials, expenses, budgetSummary: budgetSummaryWithOperationalSpend }
     });
   } catch (error) {
     console.error('Error in getSiteOperationsReports:', error);

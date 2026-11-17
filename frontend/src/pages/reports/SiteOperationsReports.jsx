@@ -10,6 +10,7 @@ const REPORTS = {
     label: "Work completion",
     columns: [
       ["site_name", "Site"],
+      ["item_display", "Item"],
       ["work_description", "Work description"],
       ["entry_date", "Date"],
       ["completed_quantity", "Completed quantity"],
@@ -94,6 +95,13 @@ const SUMMARY_COLUMNS = {
   ]
 };
 
+const COST_PERCENTAGE_CONFIG = {
+  labour: { field: "labour_cost", label: "Labour cost" },
+  materials: { field: "material_cost", label: "Material cost" },
+  expenses: { field: "expense_cost", label: "Budget expenses" },
+  budgetSummary: { field: "spent", label: "Budget summary spend" }
+};
+
 const amountFields = new Set([
   "rate",
   "shift_cost",
@@ -119,7 +127,10 @@ const formatValue = (field, value) => {
 const summarizeRows = (rows, reportKey) => {
   const grouped = new Map();
   for (const row of rows) {
-    const key = `${row.site_id}:${row.desc_id}`;
+    const teamName = row.team_name || "Other labourers";
+    const key = reportKey === "labour"
+      ? `${row.site_id}:${row.desc_id}:${teamName}`
+      : `${row.site_id}:${row.desc_id}`;
     if (!grouped.has(key)) {
       grouped.set(key, {
         site_id: row.site_id,
@@ -127,6 +138,7 @@ const summarizeRows = (rows, reportKey) => {
         project_name: row.project_name,
         desc_id: row.desc_id,
         work_description: row.work_description,
+        team_name: reportKey === "labour" ? teamName : undefined,
         completed_work_cost: 0,
         shift: 0,
         labour_cost: 0,
@@ -253,6 +265,20 @@ const SiteOperationsReports = () => {
     );
   }, [reports]);
 
+  const costPercentages = useMemo(() => {
+    if (!reports) return {};
+    const completedWorkCost = (reports.completion || [])
+      .reduce((total, row) => total + numberValue(row.completed_work_cost), 0);
+
+    return Object.fromEntries(
+      Object.entries(COST_PERCENTAGE_CONFIG).map(([key, { field }]) => {
+        const headCost = (reports[key] || [])
+          .reduce((total, row) => total + numberValue(row[field]), 0);
+        return [key, completedWorkCost > 0 ? (headCost / completedWorkCost) * 100 : null];
+      })
+    );
+  }, [reports]);
+
   const reportKeys = Object.keys(REPORTS);
   const exportExcel = async () => {
     if (!reports) return;
@@ -262,12 +288,23 @@ const SiteOperationsReports = () => {
       const workbook = new ExcelJS.Workbook();
       if (detailMode !== "detail") {
         const overview = workbook.addWorksheet("Overview");
-        overview.addRow(["Report", "Site", "Work description", "Metric", "Value"]);
+        overview.addRow(["Report", "Site", "Work description", "Team", "Metric", "Value"]);
         for (const key of reportKeys) {
           for (const row of summaries[key] || []) {
             for (const [field, label] of SUMMARY_COLUMNS[key]) {
-              overview.addRow([REPORTS[key].label, row.site_name, row.work_description, label, numberValue(row[field])]);
+              overview.addRow([REPORTS[key].label, row.site_name, row.work_description, row.team_name || "", label, numberValue(row[field])]);
             }
+          }
+          if (Object.hasOwn(COST_PERCENTAGE_CONFIG, key)) {
+            const percentage = costPercentages[key];
+            overview.addRow([
+              REPORTS[key].label,
+              "All filtered sites",
+              "All filtered work descriptions",
+              key === "labour" ? "All teams" : "",
+              `${COST_PERCENTAGE_CONFIG[key].label} as % of completed work value`,
+              percentage === null ? "—" : `${percentage.toFixed(2)}%`
+            ]);
           }
         }
       }
@@ -278,6 +315,7 @@ const SiteOperationsReports = () => {
           const columns = [
             ["site_name", "Site"],
             ["work_description", "Work description"],
+            ...(key === "labour" ? [["team_name", "Team"]] : []),
             ...SUMMARY_COLUMNS[key]
           ];
           worksheet.addRow(columns.map(([, label]) => label));
@@ -370,6 +408,7 @@ const SiteOperationsReports = () => {
   const currentRows = reports?.[activeReport] || [];
   const currentSummary = summaries[activeReport] || [];
   const config = REPORTS[activeReport];
+  const isLabourReport = activeReport === "labour";
   return (
     <div className="min-h-full bg-slate-50 p-4 md:p-6">
       <div className="mx-auto max-w-7xl space-y-5">
@@ -501,28 +540,47 @@ const SiteOperationsReports = () => {
                 <p className="text-xs text-slate-500">{appliedFilterLabel}</p>
               </div>
 
+              {Object.hasOwn(COST_PERCENTAGE_CONFIG, activeReport) && (
+                <div className="rounded-lg border-2 border-amber-400 bg-amber-100 px-4 py-3 text-amber-950">
+                  <div className="text-sm font-semibold">
+                    {COST_PERCENTAGE_CONFIG[activeReport].label} as % of completed work value
+                  </div>
+                  <div className="mt-1 text-2xl font-bold">
+                    {costPercentages[activeReport] === null
+                      ? "—"
+                      : `${costPercentages[activeReport].toFixed(2)}%`}
+                  </div>
+                </div>
+              )}
+
               {detailMode !== "detail" && (
                 <div className="overflow-x-auto">
-                  <h4 className="mb-2 font-semibold text-slate-800">Summary by site and work description</h4>
+                  <h4 className="mb-2 font-semibold text-slate-800">
+                    {isLabourReport
+                      ? "Summary by site, work description, and team"
+                      : "Summary by site and work description"}
+                  </h4>
                   <table className="min-w-full border-collapse text-sm">
                     <thead className="bg-slate-100">
                       <tr>
                         <th className="border px-3 py-2 text-left">Site</th>
                         <th className="border px-3 py-2 text-left">Work description</th>
+                        {isLabourReport && <th className="border px-3 py-2 text-left">Team</th>}
                         {SUMMARY_COLUMNS[activeReport].map(([, label]) => <th key={label} className="border px-3 py-2 text-right">{label}</th>)}
                       </tr>
                     </thead>
                     <tbody>
                       {currentSummary.length ? currentSummary.map(row => (
-                        <tr key={`${row.site_id}-${row.desc_id}`}>
+                        <tr key={`${row.site_id}-${row.desc_id}-${row.team_name || ""}`}>
                           <td className="border px-3 py-2">{row.site_name || row.site_id}</td>
                           <td className="border px-3 py-2">{row.work_description || "—"}</td>
+                          {isLabourReport && <td className="border px-3 py-2">{row.team_name || "Other labourers"}</td>}
                           {SUMMARY_COLUMNS[activeReport].map(([field]) => (
                             <td key={field} className="border px-3 py-2 text-right">{formatValue(field, row[field])}</td>
                           ))}
                         </tr>
                       )) : (
-                        <tr><td className="border px-3 py-4 text-center text-slate-500" colSpan={2 + SUMMARY_COLUMNS[activeReport].length}>No summary rows match these filters.</td></tr>
+                        <tr><td className="border px-3 py-4 text-center text-slate-500" colSpan={2 + (isLabourReport ? 1 : 0) + SUMMARY_COLUMNS[activeReport].length}>No summary rows match these filters.</td></tr>
                       )}
                     </tbody>
                   </table>
