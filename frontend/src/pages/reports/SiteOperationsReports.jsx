@@ -4,6 +4,19 @@ import axios from "axios";
 import html2pdf from "html2pdf.js";
 import { Download, FileSpreadsheet, FileText, Loader2 } from "lucide-react";
 import { toast } from "react-toastify";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from "recharts";
 
 const REPORTS = {
   completion: {
@@ -102,6 +115,8 @@ const COST_PERCENTAGE_CONFIG = {
   budgetSummary: { field: "spent", label: "Budget summary spend" }
 };
 
+const REPORT_CHART_COLORS = ["#4f46e5", "#0891b2", "#16a34a", "#d97706", "#db2777"];
+
 const amountFields = new Set([
   "rate",
   "shift_cost",
@@ -167,6 +182,8 @@ const SiteOperationsReports = () => {
   const [singleDate, setSingleDate] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [viewMode, setViewMode] = useState("table");
+  const [chartType, setChartType] = useState("bar");
   const [detailMode, setDetailMode] = useState("both");
   const [reports, setReports] = useState(null);
   const [appliedFilterLabel, setAppliedFilterLabel] = useState("");
@@ -279,6 +296,20 @@ const SiteOperationsReports = () => {
     );
   }, [reports]);
 
+  const dashboardChartData = useMemo(() => {
+    if (!reports) return [];
+    const sumField = (reportKey, field) => (reports[reportKey] || [])
+      .reduce((total, row) => total + numberValue(row[field]), 0);
+
+    return [
+      { name: "Work completion", value: sumField("completion", "completed_work_cost") },
+      { name: "Labour cost", value: sumField("labour", "labour_cost") },
+      { name: "Materials", value: sumField("materials", "material_cost") },
+      { name: "Budget expenses", value: sumField("expenses", "expense_cost") },
+      { name: "Budget summary spend", value: sumField("budgetSummary", "spent") }
+    ];
+  }, [reports]);
+
   const reportKeys = Object.keys(REPORTS);
   const exportExcel = async () => {
     if (!reports) return;
@@ -332,8 +363,9 @@ const SiteOperationsReports = () => {
         }
         worksheet.getRow(1).font = { bold: true };
         worksheet.columns.forEach(column => {
+          const values = column.values.filter(value => value !== null && value !== undefined && value !== "");
           column.width = Math.min(
-            Math.max(...worksheet.getColumn(column.number).values.map(value => String(value || "").length), 12) + 2,
+            Math.max(12, ...values.map(value => String(value).length)) + 2,
             36
           );
         });
@@ -343,11 +375,14 @@ const SiteOperationsReports = () => {
       const blob = new Blob([buffer], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
       });
+      const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
+      link.href = url;
       link.download = "site-operations-reports.xlsx";
+      document.body.appendChild(link);
       link.click();
-      URL.revokeObjectURL(link.href);
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) {
       console.error("Failed to export Excel report:", error);
       toast.error("Failed to create Excel report");
@@ -371,27 +406,82 @@ const SiteOperationsReports = () => {
             if (!report) return;
             clonedDocument.querySelectorAll('style, link[rel="stylesheet"]').forEach(node => node.remove());
             report.querySelectorAll("[class]").forEach(node => node.removeAttribute("class"));
+
+            const companyHeader = clonedDocument.createElement("div");
+            companyHeader.id = "pdf-company-header";
+            const companyLogo = clonedDocument.createElement("img");
+            companyLogo.src = `${window.location.origin}/logo_abstract.png`;
+            companyLogo.alt = "Sathya Hitec Solutions logo";
+            const companyDetails = clonedDocument.createElement("div");
+            const companyName = clonedDocument.createElement("h1");
+            companyName.textContent = "SATHYA HITEC SOLUTIONS LLP";
+            const reportName = clonedDocument.createElement("p");
+            reportName.textContent = "SITE OPERATIONS REPORT";
+            companyDetails.append(companyName, reportName);
+            companyHeader.append(companyLogo, companyDetails);
+            report.prepend(companyHeader);
+
+            const numericHeaders = /(quantity|shift|rate|cost|value|budget|spent|balance)/i;
+            report.querySelectorAll("table").forEach(table => {
+              const headers = [...table.querySelectorAll("thead th")];
+              table.querySelectorAll("tbody tr").forEach(row => {
+                [...row.querySelectorAll("td")].forEach((cell, index) => {
+                  const header = headers[index]?.textContent?.trim() || "";
+                  cell.style.textAlign = numericHeaders.test(header)
+                    ? "right"
+                    : /^date$/i.test(header) || /^uom$/i.test(header)
+                      ? "center"
+                      : "left";
+                });
+              });
+            });
+
             const printStyles = clonedDocument.createElement("style");
             printStyles.textContent = `
               html, body { margin: 0; padding: 0; background: #ffffff; }
               #site-operations-report-print {
-                width: 100%; padding: 8px; box-sizing: border-box;
+                width: 100%; padding: 4px; box-sizing: border-box;
                 color: #1f2937; background: #ffffff;
-                font: 10px Arial, sans-serif;
+                font: 11px Arial, sans-serif;
               }
               #site-operations-report-print * { box-shadow: none !important; }
-              #site-operations-report-print h3 { margin: 10px 0 6px; font-size: 16px; }
-              #site-operations-report-print h4 { margin: 8px 0 4px; font-size: 12px; }
-              #site-operations-report-print p { margin: 4px 0 8px; font-size: 9px; }
+              #pdf-company-header {
+                display: flex; align-items: center; gap: 12px;
+                margin: 0 0 14px; padding: 0 0 10px;
+                border-bottom: 2px solid #0f766e;
+                page-break-after: avoid; break-after: avoid;
+              }
+              #pdf-company-header img {
+                width: 58px; height: 58px; object-fit: contain; flex: 0 0 auto;
+              }
+              #pdf-company-header h1 {
+                margin: 0; color: #134e4a; font-size: 18px; font-weight: 700;
+                letter-spacing: 0.4px;
+              }
+              #pdf-company-header p {
+                margin: 4px 0 0; color: #475569; font-size: 9px;
+                font-weight: 700; letter-spacing: 1.2px;
+              }
+              #site-operations-report-print h3 { margin: 10px 0 6px; font-size: 15px; color: #0f172a; }
+              #site-operations-report-print h4 { margin: 10px 0 5px; font-size: 12px; color: #334155; }
+              #site-operations-report-print p { margin: 4px 0 8px; font-size: 9px; color: #475569; }
               #site-operations-report-print table {
-                width: 100%; margin-bottom: 12px; border-collapse: collapse; font-size: 9px;
+                width: 100%; margin: 0 0 14px; border-collapse: collapse;
+                table-layout: auto; font-size: 10px;
               }
               #site-operations-report-print th,
               #site-operations-report-print td {
-                padding: 4px 6px; border: 1px solid #cbd5e1; color: #1f2937;
+                padding: 6px 7px; border: 1px solid #cbd5e1;
+                color: #1f2937; vertical-align: middle;
               }
-              #site-operations-report-print th { background: #f1f5f9; }
-              #site-operations-report-print tr { page-break-inside: avoid; }
+              #site-operations-report-print th {
+                background: #e2e8f0; color: #0f172a; font-weight: 700;
+                text-align: left;
+              }
+              #site-operations-report-print thead { display: table-header-group; }
+              #site-operations-report-print tr {
+                page-break-inside: avoid; break-inside: avoid;
+              }
             `;
             clonedDocument.head.appendChild(printStyles);
           }
@@ -510,7 +600,38 @@ const SiteOperationsReports = () => {
                 <h2 className="text-lg font-semibold text-slate-900">Report results</h2>
                 <p className="text-sm text-slate-500">{appliedFilterLabel} · Budget summary spend is for the selected period.</p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex rounded-md border border-slate-300 p-1" role="group" aria-label="Report view">
+                  <button
+                    type="button"
+                    aria-pressed={viewMode === "table"}
+                    onClick={() => setViewMode("table")}
+                    className={`rounded px-3 py-2 text-sm font-medium ${viewMode === "table" ? "bg-blue-600 text-white" : "text-slate-700 hover:bg-slate-100"}`}
+                  >
+                    Table
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={viewMode === "dashboard"}
+                    onClick={() => setViewMode("dashboard")}
+                    className={`rounded px-3 py-2 text-sm font-medium ${viewMode === "dashboard" ? "bg-blue-600 text-white" : "text-slate-700 hover:bg-slate-100"}`}
+                  >
+                    Dashboard
+                  </button>
+                </div>
+                {viewMode === "dashboard" && (
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    Chart
+                    <select
+                      value={chartType}
+                      onChange={event => setChartType(event.target.value)}
+                      className="rounded-md border border-slate-300 px-3 py-2"
+                    >
+                      <option value="bar">Bar</option>
+                      <option value="pie">Pie</option>
+                    </select>
+                  </label>
+                )}
                 <button type="button" onClick={exportExcel} className="inline-flex items-center gap-2 rounded-md border border-emerald-300 px-3 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-50">
                   <FileSpreadsheet size={16} /> Excel
                 </button>
@@ -520,21 +641,76 @@ const SiteOperationsReports = () => {
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
-              {reportKeys.map(key => (
-                <button
-                  type="button"
-                  key={key}
-                  onClick={() => setActiveReport(key)}
-                  className={`rounded-md px-3 py-2 text-sm font-medium ${activeReport === key ? "bg-indigo-100 text-indigo-800" : "text-slate-600 hover:bg-slate-100"}`}
-                >
-                  {REPORTS[key].label}
-                  <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs">{reports[key]?.length || 0}</span>
-                </button>
-              ))}
-            </div>
+            {viewMode === "table" && (
+              <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
+                {reportKeys.map(key => (
+                  <button
+                    type="button"
+                    key={key}
+                    onClick={() => setActiveReport(key)}
+                    className={`rounded-md px-3 py-2 text-sm font-medium ${activeReport === key ? "bg-indigo-100 text-indigo-800" : "text-slate-600 hover:bg-slate-100"}`}
+                  >
+                    {REPORTS[key].label}
+                    <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs">{reports[key]?.length || 0}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div id="site-operations-report-print" className="space-y-5 bg-white">
+              {viewMode === "dashboard" ? (
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">All report heads</h3>
+                    <p className="text-xs text-slate-500">
+                      {appliedFilterLabel} · Budget summary is a roll-up and overlaps other report totals.
+                    </p>
+                  </div>
+                  {dashboardChartData.some(item => item.value > 0) ? (
+                    <div
+                      className="h-[420px] w-full rounded-lg border border-slate-200 p-4"
+                      style={{ height: 420, width: "100%" }}
+                    >
+                      <ResponsiveContainer width="100%" height="100%">
+                        {chartType === "bar" ? (
+                          <BarChart data={dashboardChartData} margin={{ top: 16, right: 24, left: 16, bottom: 56 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                            <XAxis dataKey="name" angle={-18} textAnchor="end" interval={0} height={64} />
+                            <YAxis tickFormatter={value => `₹${Number(value).toLocaleString("en-IN")}`} />
+                            <Tooltip formatter={value => [`₹${numberValue(value).toFixed(2)}`, "Total"]} />
+                            <Bar dataKey="value" name="Total cost" radius={[4, 4, 0, 0]}>
+                              {dashboardChartData.map((item, index) => (
+                                <Cell key={item.name} fill={REPORT_CHART_COLORS[index % REPORT_CHART_COLORS.length]} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        ) : (
+                          <PieChart>
+                            <Pie
+                              data={dashboardChartData.filter(item => item.value > 0)}
+                              dataKey="value"
+                              nameKey="name"
+                              outerRadius={140}
+                              label={({ percent }) => `${(percent * 100).toFixed(1)}%`}
+                            >
+                              {dashboardChartData.filter(item => item.value > 0).map(item => (
+                                <Cell key={item.name} fill={REPORT_CHART_COLORS[dashboardChartData.indexOf(item) % REPORT_CHART_COLORS.length]} />
+                              ))}
+                            </Pie>
+                            <Tooltip formatter={value => `₹${numberValue(value).toFixed(2)}`} />
+                            <Legend />
+                          </PieChart>
+                        )}
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-slate-300 p-10 text-center text-slate-500">
+                      No cost data is available for the selected filters.
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <>
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">{config.label}</h3>
                 <p className="text-xs text-slate-500">{appliedFilterLabel}</p>
@@ -605,6 +781,8 @@ const SiteOperationsReports = () => {
                     </tbody>
                   </table>
                 </div>
+              )}
+                </>
               )}
             </div>
           </section>
