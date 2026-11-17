@@ -513,7 +513,49 @@ const ProjectList = () => {
   );
 
   const currentPoGroup = poGroups.find((group) => group[0]?.po_number === selectedSitePo) || [];
-
+  const totalPoValue = filteredData.reduce(
+    (total, record) => total + (parseFloat(record.value) || 0),
+    0
+  );
+  const workDescriptionGroups = [];
+  const workDescriptionGroupsByKey = new Map();
+  filteredData.forEach(record => {
+    const workDescriptionKey = record.desc_id !== null && record.desc_id !== undefined
+      ? `id:${record.desc_id}`
+      : `name:${(record.work_descriptions || "").trim().toLowerCase() || record.rec_id}`;
+    let group = workDescriptionGroupsByKey.get(workDescriptionKey);
+    if (!group) {
+      group = { key: workDescriptionKey, records: [] };
+      workDescriptionGroupsByKey.set(workDescriptionKey, group);
+      workDescriptionGroups.push(group);
+    }
+    group.records.push(record);
+  });
+  const displayData = workDescriptionGroups.flatMap(group => group.records);
+  const firstWorkDescriptionRecIds = new Set();
+  const workDescriptionRowSpans = new Map();
+  workDescriptionGroups.forEach(group => {
+    const firstRecord = group.records[0];
+    firstWorkDescriptionRecIds.add(firstRecord.rec_id);
+    workDescriptionRowSpans.set(firstRecord.rec_id, group.records.length);
+  });
+  const firstWorkDescriptionRecords = workDescriptionGroups.map(group => group.records[0]);
+  const totalCompletionValue = filteredData.reduce(
+    (total, record) => total + (parseFloat(record.completion_value) || 0),
+    0
+  );
+  const totalBalanceValue = filteredData.reduce(
+    (total, record) => total + (parseFloat(record.value) || 0) - (parseFloat(record.completion_value) || 0),
+    0
+  );
+  const totalMaterialValue = firstWorkDescriptionRecords.reduce(
+    (total, record) => total + (parseFloat(record.material_used_value) || 0),
+    0
+  );
+  const totalLabourValue = firstWorkDescriptionRecords.reduce(
+    (total, record) => total + (parseFloat(record.labour_cost) || 0),
+    0
+  );
   return (
     <>
       {/* Modals remain the same */}
@@ -925,9 +967,27 @@ const ProjectList = () => {
           ) : (
             <div className="bg-white rounded-xl shadow-md border border-gray-200">
               {/* Mobile View: Card Layout */}
+              <div className="md:hidden grid grid-cols-2 gap-2 border-b border-gray-200 px-4 py-3 text-xs text-gray-700 sm:grid-cols-3">
+                <div>
+                  PO Value: <span className="font-semibold">₹{totalPoValue.toFixed(2)}</span>
+                </div>
+                <div>
+                  Completion Value: <span className="font-semibold">₹{totalCompletionValue.toFixed(2)}</span>
+                </div>
+                <div>
+                  Balance Value: <span className="font-semibold">₹{totalBalanceValue.toFixed(2)}</span>
+                </div>
+                <div>
+                  Materials: <span className="font-semibold">₹{totalMaterialValue.toFixed(2)}</span>
+                </div>
+                <div>
+                  Labour: <span className="font-semibold">₹{totalLabourValue.toFixed(2)}</span>
+                </div>
+              </div>
               <div className="md:hidden divide-y divide-gray-200">
-                {filteredData.map((r) => {
+                {displayData.map((r) => {
                   const balance = calculateBalance(r);
+                  const isFirstWorkDescriptionLine = firstWorkDescriptionRecIds.has(r.rec_id);
                   return (
                     <div key={r.rec_id} className="p-4 space-y-4">
                       <div className="flex justify-between items-start">
@@ -1007,11 +1067,16 @@ const ProjectList = () => {
                           <div>Qty: {balance.qty} {r.uom}</div>
                           <div>Value: {balance.value}</div>
                         </div>
-                        <div title="Costs are totaled for this work description and repeat for reckoner items with the same description.">
-                          <div className="font-medium text-gray-700">Work Description Costs</div>
-                          <div>Materials: ₹{Number(r.material_used_value || 0).toFixed(2)}</div>
-                          <div>Labour: ₹{Number(r.labour_cost || 0).toFixed(2)}</div>
-                        </div>
+                        {isFirstWorkDescriptionLine && (
+                          <div
+                            className="text-center"
+                            title="Shared work-description costs are shown on its first line only."
+                          >
+                            <div className="font-medium text-gray-700">Work Description Costs</div>
+                            <div>Materials: ₹{Number(r.material_used_value || 0).toFixed(2)}</div>
+                            <div>Labour: ₹{Number(r.labour_cost || 0).toFixed(2)}</div>
+                          </div>
+                        )}
                         <div>
                           <div className="font-medium text-gray-700">Status</div>
                           <div className="space-y-2">
@@ -1044,15 +1109,32 @@ const ProjectList = () => {
                       </th>
                       <th className="px-4 py-3 text-center text-xs font-medium text-white uppercase tracking-wider" colSpan={3}>
                         PO Details
+                        <div className="mt-1 text-[10px] font-semibold normal-case">
+                          Total value: ₹{totalPoValue.toFixed(2)}
+                        </div>
                       </th>
                       <th className="px-4 py-3 text-center text-xs font-medium text-white uppercase tracking-wider" colSpan={2}>
                         Completion
+                        <div className="mt-1 text-[10px] font-semibold normal-case">
+                          Total value: ₹{totalCompletionValue.toFixed(2)}
+                        </div>
                       </th>
                       <th className="px-4 py-3 text-center text-xs font-medium text-white uppercase tracking-wider" colSpan={2}>
                         Balance
+                        <div className="mt-1 text-[10px] font-semibold normal-case">
+                          Total value: ₹{totalBalanceValue.toFixed(2)}
+                        </div>
                       </th>
                       <th className="px-4 py-3 text-center text-xs font-medium text-white uppercase tracking-wider" colSpan={2}>
                         Work Description Costs
+                        <div className="mt-1 text-[10px] font-semibold normal-case">
+                          <span>
+                            Materials: ₹{totalMaterialValue.toFixed(2)}
+                          </span>
+                          <span className="mx-1">
+                            Labour: ₹{totalLabourValue.toFixed(2)}
+                          </span>
+                        </div>
                       </th>
                       <th className="px-4 py-3 text-center text-xs font-medium text-white uppercase tracking-wider" rowSpan={2}>
                         Status
@@ -1074,8 +1156,9 @@ const ProjectList = () => {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {filteredData.map((r) => {
+                    {displayData.map((r) => {
                       const balance = calculateBalance(r);
+                      const isFirstWorkDescriptionLine = firstWorkDescriptionRecIds.has(r.rec_id);
                       return (
                         <tr key={r.rec_id} className="hover:bg-gray-50 transition-colors">
                           <td className="px-4 py-4 text-sm font-medium text-gray-900">
@@ -1114,18 +1197,28 @@ const ProjectList = () => {
                           )}
                           <td className="px-2 py-4 text-center text-sm">{balance.qty} {r.uom}</td>
                           <td className="px-2 py-4 text-center text-sm">{balance.value}</td>
-                          <td
-                            className="px-2 py-4 text-center text-sm"
-                            title="Material usage value for this work description"
-                          >
-                            ₹{Number(r.material_used_value || 0).toFixed(2)}
-                          </td>
-                          <td
-                            className="px-2 py-4 text-center text-sm"
-                            title="Labour attendance cost for this work description"
-                          >
-                            ₹{Number(r.labour_cost || 0).toFixed(2)}
-                          </td>
+                          {isFirstWorkDescriptionLine && (
+                            <>
+                              <td
+                                rowSpan={workDescriptionRowSpans.get(r.rec_id)}
+                                className="px-2 py-4 text-center align-middle text-sm"
+                                title="Shared material usage value for this work description"
+                              >
+                                <span className="flex h-full items-center justify-center text-center">
+                                  ₹{Number(r.material_used_value || 0).toFixed(2)}
+                                </span>
+                              </td>
+                              <td
+                                rowSpan={workDescriptionRowSpans.get(r.rec_id)}
+                                className="px-2 py-4 text-center align-middle text-sm"
+                                title="Shared labour attendance cost for this work description"
+                              >
+                                <span className="flex h-full items-center justify-center text-center">
+                                  ₹{Number(r.labour_cost || 0).toFixed(2)}
+                                </span>
+                              </td>
+                            </>
+                          )}
                           <td className="px-4 py-4 text-center text-sm space-y-2">
                             {editingId === r.rec_id
                               ? renderStatusTag(editingData.work_status)
