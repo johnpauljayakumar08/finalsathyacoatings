@@ -821,7 +821,8 @@ const WorkAndMaterialEntry = () => {
         item_description: entry.item_description || "",
         uom: entry.uom || "",
         quantity: entry.quantity ?? "",
-        rate: entry.rate ?? ""
+        rate: entry.rate ?? "",
+        remarks: entry.remarks || ""
       }
     }));
   };
@@ -853,9 +854,14 @@ const WorkAndMaterialEntry = () => {
     const uom = String(input.uom ?? existing?.uom ?? "").trim();
     const quantity = Number(input.quantity ?? existing?.quantity);
     const rate = Number(input.rate ?? existing?.rate);
+    const remarks = String(input.remarks ?? existing?.remarks ?? "").trim();
     if (!description || !uom || !Number.isFinite(quantity) || quantity <= 0 ||
         !Number.isFinite(rate) || rate < 0) {
       toast.error("Enter a description, UOM, positive quantity, and non-negative rate");
+      return;
+    }
+    if (!remarks) {
+      toast.error("Expense remarks are required");
       return;
     }
     if (!userId) {
@@ -870,6 +876,7 @@ const WorkAndMaterialEntry = () => {
       uom,
       quantity,
       rate,
+      remarks,
       actual_value: value
     };
 
@@ -1471,6 +1478,7 @@ const WorkAndMaterialEntry = () => {
                           const uom = input.uom ?? existing?.uom ?? "";
                           const quantity = input.quantity ?? (existing?.quantity ?? "");
                           const rate = input.rate ?? (existing?.rate ?? "");
+                          const remarks = input.remarks ?? existing?.remarks ?? "";
                           const quantityNumber = Number(quantity);
                           const rateNumber = Number(rate);
                           const calculatedValue = Number.isFinite(quantityNumber) && quantityNumber > 0 &&
@@ -1546,6 +1554,19 @@ const WorkAndMaterialEntry = () => {
                             </div>
                           </div>
                         </div>
+
+                        <label className="mt-3 block text-xs font-medium text-gray-600">
+                          Remarks <span className="text-red-600">*</span>
+                          <textarea
+                            rows={2}
+                            maxLength={1000}
+                            value={remarks}
+                            disabled={!canEdit}
+                            onChange={event => updateBudgetExpenseInput(budget.id, form.id, "remarks", event.target.value)}
+                            placeholder="Enter expense remarks"
+                            className="mt-1 w-full resize-y rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
+                          />
+                        </label>
 
                         <div className="mt-3 flex justify-end">
                           <button
