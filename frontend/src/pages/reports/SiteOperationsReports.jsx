@@ -38,6 +38,7 @@ const REPORTS = {
     columns: [
       ["site_name", "Site"],
       ["work_description", "Work description"],
+      ["team_name", "Team"],
       ["entry_date", "Date"],
       ["labour_name", "Labour"],
       ["shift", "Shifts"],

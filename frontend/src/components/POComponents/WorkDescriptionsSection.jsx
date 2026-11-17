@@ -60,6 +60,12 @@ const WorkDescriptionsSection = ({
                 >
                   Category
                 </th>
+                <th
+                  className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider"
+                  style={{ color: themeColors.textSecondary }}
+                >
+                  Item
+                </th>
                 <th 
                   className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider"
                   style={{ color: themeColors.textSecondary }}
@@ -82,6 +88,17 @@ const WorkDescriptionsSection = ({
                     style={{ color: themeColors.textPrimary }}
                   >
                     {item.category_name}
+                  </td>
+                  <td
+                    className="px-6 py-4 whitespace-nowrap text-sm"
+                    style={{ color: themeColors.textSecondary }}
+                  >
+                    {[
+                      item.item_id,
+                      [item.category_name, item.subcategory_name].filter(Boolean).join(" / "),
+                    ]
+                      .filter(Boolean)
+                      .join(" ") || "—"}
                   </td>
                   <td 
                     className="px-6 py-4 whitespace-nowrap text-sm"

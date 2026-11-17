@@ -27,6 +27,23 @@ const getRandomColor = (index) => {
   return colors[index % colors.length];
 };
 
+const getUniqueReckonerItems = (rows) => {
+  const seenItems = new Set();
+  return rows.filter((item) => {
+    const key = [
+      item.category_id ?? item.category_name,
+      item.desc_id ?? item.desc_name,
+      item.item_id,
+      item.subcategory_id ?? item.subcategory_name,
+    ]
+      .map((value) => String(value ?? "").trim().toLowerCase())
+      .join("\u001f");
+    if (seenItems.has(key)) return false;
+    seenItems.add(key);
+    return true;
+  });
+};
+
 const initialFormData = {
   poNumber: "",
   siteId: "",
@@ -196,20 +213,9 @@ const POMasterCreation = ({
           // }, {});
 
           const reckonerDataMap = reckonerResults.reduce((acc, { siteId, data }) => {
-              const isDuplicate = (item, index, array) => {
-                return array.findIndex((otherItem, otherIndex) =>
-                  otherIndex < index &&
-                  otherItem.category_name.toLowerCase() === item.category_name.toLowerCase() &&
-                  otherItem.desc_name.toLowerCase() === item.desc_name.toLowerCase()
-                ) !== -1;
-              };
-
-              // filter out duplicates
-              const uniqueData = data.filter((item, index, array) => !isDuplicate(item, index, array));
-
-              acc[siteId] = uniqueData;
-              return acc;
-            }, {});
+            acc[siteId] = getUniqueReckonerItems(data);
+            return acc;
+          }, {});
 
             console.log("Fetched site reckoner data:", reckonerDataMap);
 
@@ -969,7 +975,7 @@ const handleSubcategoryRateChange = (categoryIndex, itemIndex, subcategoryIndex,
 
       const reckonerResults = await Promise.all(siteReckonerPromises);
       const reckonerDataMap = reckonerResults.reduce((acc, { siteId, data }) => {
-        acc[siteId] = data;
+        acc[siteId] = getUniqueReckonerItems(data);
         return acc;
       }, {});
       setSiteReckonerData(reckonerDataMap);
