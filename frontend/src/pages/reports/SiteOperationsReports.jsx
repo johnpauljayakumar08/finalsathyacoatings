@@ -76,7 +76,6 @@ const REPORTS = {
 
 const SUMMARY_COLUMNS = {
   completion: [
-    ["completed_quantity", "Completed quantity"],
     ["completed_work_cost", "Completed work value"]
   ],
   labour: [
@@ -128,7 +127,6 @@ const summarizeRows = (rows, reportKey) => {
         project_name: row.project_name,
         desc_id: row.desc_id,
         work_description: row.work_description,
-        completed_quantity: 0,
         completed_work_cost: 0,
         shift: 0,
         labour_cost: 0,
